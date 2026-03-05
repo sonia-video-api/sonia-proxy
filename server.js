@@ -11,6 +11,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
+const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN || '';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '376154181732-a842jan6p193tea2fgfctiq26ngphi44.apps.googleusercontent.com';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://sonia-video-bd-site.onrender.com';
@@ -19,7 +20,59 @@ const REDIRECT_URI = PROXY_URL + '/auth/callback';
 const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
 
 // Health check
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v2 - DALL-E 3 + FFmpeg' }));
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v3 - Replicate DALL-E 3 + OpenAI TTS + FFmpeg.wasm' }));
+
+// === HELPER: Générer image via Replicate DALL-E 3 ===
+async function genererImageReplicate(prompt) {
+  // Lancer la prédiction
+  const startRes = await fetch('https://api.replicate.com/v1/models/openai/dall-e-3/predictions', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + REPLICATE_TOKEN,
+      'Content-Type': 'application/json',
+      'Prefer': 'wait'
+    },
+    body: JSON.stringify({
+      input: {
+        prompt: prompt,
+        size: '1024x1792',
+        quality: 'standard',
+        style: 'vivid'
+      }
+    })
+  });
+
+  if (!startRes.ok) {
+    const err = await startRes.text();
+    throw new Error('Erreur Replicate DALL-E 3: ' + err);
+  }
+
+  const prediction = await startRes.json();
+
+  // Si déjà terminé (Prefer: wait)
+  if (prediction.status === 'succeeded' && prediction.output && prediction.output[0]) {
+    return prediction.output[0];
+  }
+
+  // Sinon, polling jusqu'à completion
+  const predId = prediction.id;
+  let attempts = 0;
+  while (attempts < 60) {
+    await new Promise(r => setTimeout(r, 3000));
+    const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
+      headers: { 'Authorization': 'Bearer ' + REPLICATE_TOKEN }
+    });
+    const pollData = await pollRes.json();
+    if (pollData.status === 'succeeded' && pollData.output && pollData.output[0]) {
+      return pollData.output[0];
+    }
+    if (pollData.status === 'failed' || pollData.status === 'canceled') {
+      throw new Error('Replicate échec: ' + (pollData.error || pollData.status));
+    }
+    attempts++;
+  }
+  throw new Error('Timeout Replicate après 3 minutes');
+}
 
 // === GÉNÉRATION HISTOIRE BD PAR IA (GPT) ===
 app.post('/api/histoire', async (req, res) => {
@@ -121,74 +174,29 @@ Réponds en JSON avec cette structure exacte :
   }
 });
 
-// === GÉNÉRATION IMAGE DALL-E 3 (Standard et HD) ===
+// === GÉNÉRATION IMAGE DALL-E 3 via Replicate (Standard) ===
 app.post('/api/generate/standard', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
 
   try {
     const fullPrompt = `Comic book illustration, colorful BD style, vertical 9:16 format, vibrant colors, detailed artwork: ${prompt}`;
-    const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + OPENAI_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'dall-e-3',
-        prompt: fullPrompt,
-        n: 1,
-        size: '1024x1792',
-        quality: 'standard',
-        response_format: 'url'
-      })
-    });
-
-    if (!dalleRes.ok) {
-      const err = await dalleRes.text();
-      return res.status(500).json({ error: 'Erreur DALL-E 3: ' + err });
-    }
-
-    const dalleData = await dalleRes.json();
-    const imageUrl = dalleData.data[0].url;
+    const imageUrl = await genererImageReplicate(fullPrompt);
     return res.json({ images: [imageUrl] });
-
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
+// === GÉNÉRATION IMAGE DALL-E 3 via Replicate (HD) ===
 app.post('/api/generate/hd', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
 
   try {
     const fullPrompt = `High quality comic book illustration, HD colorful BD style, vertical 9:16 format, ultra detailed vibrant artwork, professional illustration: ${prompt}`;
-    const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + OPENAI_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'dall-e-3',
-        prompt: fullPrompt,
-        n: 1,
-        size: '1024x1792',
-        quality: 'hd',
-        response_format: 'url'
-      })
-    });
-
-    if (!dalleRes.ok) {
-      const err = await dalleRes.text();
-      return res.status(500).json({ error: 'Erreur DALL-E 3 HD: ' + err });
-    }
-
-    const dalleData = await dalleRes.json();
-    const imageUrl = dalleData.data[0].url;
+    const imageUrl = await genererImageReplicate(fullPrompt);
     return res.json({ images: [imageUrl] });
-
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -228,75 +236,48 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
-// === GÉNÉRATION VIDÉO COMPLÈTE (Images + Voix + Assemblage FFmpeg) ===
+// === GÉNÉRATION VIDÉO COMPLÈTE (Images + Voix en base64 pour assemblage côté client) ===
 app.post('/api/generer-video', async (req, res) => {
   const { histoire, qualite = 'standard', voix = 'nova' } = req.body;
   if (!histoire) return res.status(400).json({ error: 'Histoire requise' });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sonia-'));
-  
+
   try {
-    // Vérifier si FFmpeg est disponible
-    let ffmpegAvailable = false;
-    try {
-      execSync('ffmpeg -version', { stdio: 'ignore' });
-      ffmpegAvailable = true;
-    } catch(e) {
-      ffmpegAvailable = false;
-    }
+    const pages = [
+      {
+        numero: 0,
+        titre_page: 'Couverture',
+        description_image: histoire.couverture.description_image,
+        narration_voix: histoire.couverture.narration_voix || histoire.couverture.texte_couverture
+      },
+      ...histoire.pages
+    ];
 
-    const pages = [{ 
-      numero: 0, 
-      titre_page: 'Couverture',
-      description_image: histoire.couverture.description_image,
-      narration_voix: histoire.couverture.narration_voix || histoire.couverture.texte_couverture
-    }, ...histoire.pages];
+    const segments = [];
 
-    const imageFiles = [];
-    const audioFiles = [];
-
-    // Générer les images et voix en parallèle pour chaque page
+    // Générer les images et voix pour chaque page
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
-      
-      // Générer l'image
-      const imgPrompt = i === 0 
+
+      // Générer l'image via Replicate DALL-E 3
+      const imgPrompt = i === 0
         ? `Comic book cover, title "${histoire.titre}", colorful BD style, vertical 9:16: ${page.description_image}`
-        : page.description_image;
-      
-      const quality = qualite === 'hd' ? 'hd' : 'standard';
-      const fullPrompt = `Comic book illustration, colorful BD style, vertical 9:16 format, vibrant colors: ${imgPrompt}`;
-      
-      const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + OPENAI_KEY,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'dall-e-3',
-          prompt: fullPrompt,
-          n: 1,
-          size: '1024x1792',
-          quality: quality,
-          response_format: 'url'
-        })
-      });
+        : `Comic book page ${i}, BD illustration style, colorful: ${page.description_image}`;
 
-      if (!dalleRes.ok) throw new Error('Erreur image page ' + i);
-      const dalleData = await dalleRes.json();
-      const imageUrl = dalleData.data[0].url;
+      const fullPrompt = `Comic book illustration, colorful BD style, vertical 9:16 format, vibrant colors, professional comic art: ${imgPrompt}`;
 
-      // Télécharger l'image
+      const imageUrl = await genererImageReplicate(fullPrompt);
+
+      // Télécharger l'image et la convertir en base64
       const imgRes = await fetch(imageUrl);
       const imgBuffer = await imgRes.arrayBuffer();
-      const imgPath = path.join(tmpDir, `page_${i}.jpg`);
-      fs.writeFileSync(imgPath, Buffer.from(imgBuffer));
-      imageFiles.push(imgPath);
+      const imageBase64 = 'data:image/png;base64,' + Buffer.from(imgBuffer).toString('base64');
 
-      // Générer la voix off
+      // Générer la voix off TTS
+      let audioBase64 = null;
       const voixText = page.narration_voix || page.narration || page.dialogue || '';
-      if (voixText && ffmpegAvailable) {
+      if (voixText.trim()) {
         const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
           method: 'POST',
           headers: {
@@ -305,7 +286,7 @@ app.post('/api/generer-video', async (req, res) => {
           },
           body: JSON.stringify({
             model: 'tts-1',
-            input: voixText,
+            input: voixText.substring(0, 500), // Limiter la longueur
             voice: voix,
             response_format: 'mp3'
           })
@@ -313,76 +294,31 @@ app.post('/api/generer-video', async (req, res) => {
 
         if (ttsRes.ok) {
           const audioBuffer = await ttsRes.arrayBuffer();
-          const audioPath = path.join(tmpDir, `audio_${i}.mp3`);
-          fs.writeFileSync(audioPath, Buffer.from(audioBuffer));
-          audioFiles.push(audioPath);
-        } else {
-          audioFiles.push(null);
+          audioBase64 = 'data:audio/mp3;base64,' + Buffer.from(audioBuffer).toString('base64');
         }
-      } else {
-        audioFiles.push(null);
       }
-    }
 
-    if (!ffmpegAvailable) {
-      // Sans FFmpeg: retourner les images en base64
-      const imagesBase64 = imageFiles.map(f => {
-        const buf = fs.readFileSync(f);
-        return 'data:image/jpeg;base64,' + buf.toString('base64');
-      });
-      
-      // Nettoyer
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      
-      return res.json({ 
-        type: 'images',
-        images: imagesBase64,
-        titre: histoire.titre,
-        message: 'FFmpeg non disponible - images générées'
+      segments.push({
+        index: i,
+        titre: page.titre_page || (i === 0 ? 'Couverture' : `Page ${i}`),
+        image: imageBase64,
+        audio: audioBase64,
+        texte: voixText
       });
     }
-
-    // Avec FFmpeg: assembler la vidéo MP4
-    const videoPath = path.join(tmpDir, 'video_final.mp4');
-    const segmentFiles = [];
-
-    for (let i = 0; i < imageFiles.length; i++) {
-      const segPath = path.join(tmpDir, `segment_${i}.mp4`);
-      
-      if (audioFiles[i]) {
-        // Durée basée sur l'audio
-        execSync(`ffmpeg -loop 1 -i "${imageFiles[i]}" -i "${audioFiles[i]}" -c:v libx264 -tune stillimage -c:a aac -b:a 128k -pix_fmt yuv420p -shortest -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" "${segPath}" -y 2>/dev/null`);
-      } else {
-        // Durée fixe de 4 secondes
-        execSync(`ffmpeg -loop 1 -i "${imageFiles[i]}" -c:v libx264 -t 4 -pix_fmt yuv420p -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" "${segPath}" -y 2>/dev/null`);
-      }
-      segmentFiles.push(segPath);
-    }
-
-    // Créer le fichier de liste pour la concaténation
-    const listPath = path.join(tmpDir, 'list.txt');
-    const listContent = segmentFiles.map(f => `file '${f}'`).join('\n');
-    fs.writeFileSync(listPath, listContent);
-
-    // Concaténer tous les segments
-    execSync(`ffmpeg -f concat -safe 0 -i "${listPath}" -c copy "${videoPath}" -y 2>/dev/null`);
-
-    // Lire la vidéo et l'envoyer
-    const videoBuffer = fs.readFileSync(videoPath);
-    const videoBase64 = videoBuffer.toString('base64');
 
     // Nettoyer
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(e) {}
 
+    // Retourner les segments pour assemblage côté client (FFmpeg.wasm)
     return res.json({
-      type: 'video',
-      video: videoBase64,
-      format: 'mp4',
-      titre: histoire.titre
+      type: 'segments',
+      segments: segments,
+      titre: histoire.titre,
+      message: 'Segments prêts pour assemblage vidéo'
     });
 
   } catch (err) {
-    // Nettoyer en cas d'erreur
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(e) {}
     return res.status(500).json({ error: err.message });
   }
