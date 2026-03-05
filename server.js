@@ -261,5 +261,68 @@ app.get('/api/music', async (req, res) => {
   }
 });
 
+// === GOOGLE OAUTH ===
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '376154181732-a842jan6p193tea2fgfctiq26ngphi44.apps.googleusercontent.com';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://sonia-video-bd-site.onrender.com';
+const PROXY_URL = process.env.PROXY_URL || 'https://sonia-proxy.onrender.com';
+const REDIRECT_URI = PROXY_URL + '/auth/callback';
+
+// Route: initier la connexion Google
+app.get('/auth/google', (req, res) => {
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: REDIRECT_URI,
+    response_type: 'code',
+    scope: 'openid email profile',
+    access_type: 'offline',
+    prompt: 'select_account'
+  });
+  res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString());
+});
+
+// Route: callback Google OAuth - échange le code contre un token
+app.get('/auth/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.redirect(FRONTEND_URL + '?error=no_code');
+
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: REDIRECT_URI,
+        grant_type: 'authorization_code'
+      })
+    });
+
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) {
+      return res.redirect(FRONTEND_URL + '?error=token_failed');
+    }
+
+    // Récupérer les infos utilisateur
+    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { 'Authorization': 'Bearer ' + tokenData.access_token }
+    });
+    const user = await userRes.json();
+
+    // Rediriger vers le frontend avec les infos utilisateur encodées
+    const userParam = encodeURIComponent(JSON.stringify({
+      name: user.name,
+      email: user.email,
+      picture: user.picture,
+      id: user.id
+    }));
+    res.redirect(FRONTEND_URL + '?user=' + userParam);
+
+  } catch (err) {
+    res.redirect(FRONTEND_URL + '?error=' + encodeURIComponent(err.message));
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Sonia Proxy running on port ' + PORT));
