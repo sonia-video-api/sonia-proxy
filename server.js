@@ -7,7 +7,105 @@ app.use(cors());
 app.use(express.json());
 
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN || '';
+const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
 const HERGE_MODEL = '3092b9f17c96c7a73952fc9170273b0362d53de1c0f27fcbd54773542e6c0e62';
+
+// === GÉNÉRATION HISTOIRE BD PAR IA (GPT) ===
+app.post('/api/histoire', async (req, res) => {
+  const { phrase } = req.body;
+  if (!phrase) return res.status(400).json({ error: 'Phrase requise' });
+
+  try {
+    const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + OPENAI_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.85,
+        messages: [
+          {
+            role: 'system',
+            content: `Tu es un scénariste de bandes dessinées créatif et talentueux. 
+Tu crées des histoires BD courtes, vivantes et émouvantes en français.
+Réponds UNIQUEMENT en JSON valide, sans markdown, sans explication.`
+          },
+          {
+            role: 'user',
+            content: `Crée une histoire BD complète basée sur cette idée : "${phrase}"
+
+Réponds en JSON avec cette structure exacte :
+{
+  "titre": "Titre accrocheur de la BD",
+  "genre": "Comédie / Aventure / Romance / Drame / etc.",
+  "personnages": "Description courte des personnages principaux",
+  "couverture": {
+    "description_image": "Description détaillée pour générer l'image de couverture (en anglais, style BD coloré)",
+    "texte_couverture": "Phrase d'accroche sur la couverture"
+  },
+  "pages": [
+    {
+      "numero": 1,
+      "titre_page": "Titre court de la page",
+      "description_image": "Description détaillée pour générer l'image (en anglais, style BD coloré, avec personnages et décor)",
+      "narration": "Texte de narration de la page (2-3 phrases en français)",
+      "dialogue": "Dialogue principal de la page (en français)"
+    },
+    {
+      "numero": 2,
+      "titre_page": "Titre court",
+      "description_image": "Description image en anglais",
+      "narration": "Narration en français",
+      "dialogue": "Dialogue en français"
+    },
+    {
+      "numero": 3,
+      "titre_page": "Titre court",
+      "description_image": "Description image en anglais",
+      "narration": "Narration en français",
+      "dialogue": "Dialogue en français"
+    },
+    {
+      "numero": 4,
+      "titre_page": "Titre court",
+      "description_image": "Description image en anglais",
+      "narration": "Narration en français",
+      "dialogue": "Dialogue en français"
+    }
+  ]
+}`
+          }
+        ]
+      })
+    });
+
+    if (!gptRes.ok) {
+      const err = await gptRes.text();
+      return res.status(500).json({ error: 'Erreur GPT: ' + err });
+    }
+
+    const gptData = await gptRes.json();
+    const content = gptData.choices[0].message.content.trim();
+
+    // Parser le JSON
+    let histoire;
+    try {
+      histoire = JSON.parse(content);
+    } catch(e) {
+      // Essayer d'extraire le JSON si entouré de markdown
+      const match = content.match(/\{[\s\S]*\}/);
+      if (match) histoire = JSON.parse(match[0]);
+      else return res.status(500).json({ error: 'Réponse GPT invalide' });
+    }
+
+    return res.json({ histoire });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // Health check
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy' }));
