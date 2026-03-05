@@ -1,10 +1,11 @@
 {
   "name": "sonia-proxy",
-  "version": "1.0.0",
-  "description": "Proxy serveur pour l'API Replicate - Sonia Video BD",
+  "version": "2.0.0",
+  "description": "Proxy serveur DALL-E 3 + FFmpeg - Sonia Video BD",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "apt-get install -y ffmpeg 2>/dev/null || true"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -1,14 +1,25 @@
 const express = require('express');
 const cors = require('cors');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+const fs = require('fs');
+const path = require('path');
+const { execSync, exec } = require('child_process');
+const os = require('os');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
-const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN || '';
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
-const HERGE_MODEL = '3092b9f17c96c7a73952fc9170273b0362d53de1c0f27fcbd54773542e6c0e62';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '376154181732-a842jan6p193tea2fgfctiq26ngphi44.apps.googleusercontent.com';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://sonia-video-bd-site.onrender.com';
+const PROXY_URL = process.env.PROXY_URL || 'https://sonia-proxy.onrender.com';
+const REDIRECT_URI = PROXY_URL + '/auth/callback';
+const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
+
+// Health check
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v2 - DALL-E 3 + FFmpeg' }));
 
 // === GÉNÉRATION HISTOIRE BD PAR IA (GPT) ===
 app.post('/api/histoire', async (req, res) => {
@@ -42,37 +53,42 @@ Réponds en JSON avec cette structure exacte :
   "genre": "Comédie / Aventure / Romance / Drame / etc.",
   "personnages": "Description courte des personnages principaux",
   "couverture": {
-    "description_image": "Description détaillée pour générer l'image de couverture (en anglais, style BD coloré)",
-    "texte_couverture": "Phrase d'accroche sur la couverture"
+    "description_image": "Description détaillée pour générer l'image de couverture (en anglais, style comic book coloré, vertical 9:16)",
+    "texte_couverture": "Phrase d'accroche sur la couverture",
+    "narration_voix": "Texte de narration pour la voix off de la couverture (2 phrases en français)"
   },
   "pages": [
     {
       "numero": 1,
       "titre_page": "Titre court de la page",
-      "description_image": "Description détaillée pour générer l'image (en anglais, style BD coloré, avec personnages et décor)",
+      "description_image": "Description détaillée pour générer l'image (en anglais, style comic book coloré, vertical 9:16, avec personnages et décor)",
       "narration": "Texte de narration de la page (2-3 phrases en français)",
-      "dialogue": "Dialogue principal de la page (en français)"
+      "dialogue": "Dialogue principal de la page (en français)",
+      "narration_voix": "Texte complet pour la voix off de cette page (3-4 phrases en français)"
     },
     {
       "numero": 2,
       "titre_page": "Titre court",
-      "description_image": "Description image en anglais",
+      "description_image": "Description image en anglais, style comic book coloré, vertical 9:16",
       "narration": "Narration en français",
-      "dialogue": "Dialogue en français"
+      "dialogue": "Dialogue en français",
+      "narration_voix": "Texte voix off en français"
     },
     {
       "numero": 3,
       "titre_page": "Titre court",
-      "description_image": "Description image en anglais",
+      "description_image": "Description image en anglais, style comic book coloré, vertical 9:16",
       "narration": "Narration en français",
-      "dialogue": "Dialogue en français"
+      "dialogue": "Dialogue en français",
+      "narration_voix": "Texte voix off en français"
     },
     {
       "numero": 4,
       "titre_page": "Titre court",
-      "description_image": "Description image en anglais",
+      "description_image": "Description image en anglais, style comic book coloré, vertical 9:16",
       "narration": "Narration en français",
-      "dialogue": "Dialogue en français"
+      "dialogue": "Dialogue en français",
+      "narration_voix": "Texte voix off en français"
     }
   ]
 }`
@@ -89,12 +105,10 @@ Réponds en JSON avec cette structure exacte :
     const gptData = await gptRes.json();
     const content = gptData.choices[0].message.content.trim();
 
-    // Parser le JSON
     let histoire;
     try {
       histoire = JSON.parse(content);
     } catch(e) {
-      // Essayer d'extraire le JSON si entouré de markdown
       const match = content.match(/\{[\s\S]*\}/);
       if (match) histoire = JSON.parse(match[0]);
       else return res.status(500).json({ error: 'Réponse GPT invalide' });
@@ -107,105 +121,269 @@ Réponds en JSON avec cette structure exacte :
   }
 });
 
-// Health check
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy' }));
-
-// === GÉNÉRATION IMAGE STANDARD (Hergé Style) ===
+// === GÉNÉRATION IMAGE DALL-E 3 (Standard et HD) ===
 app.post('/api/generate/standard', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
 
   try {
-    const fullPrompt = prompt + ' herge_style';
-    const startRes = await fetch('https://api.replicate.com/v1/predictions', {
+    const fullPrompt = `Comic book illustration, colorful BD style, vertical 9:16 format, vibrant colors, detailed artwork: ${prompt}`;
+    const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: {
-        'Authorization': 'Token ' + REPLICATE_TOKEN,
+        'Authorization': 'Bearer ' + OPENAI_KEY,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        version: HERGE_MODEL,
-        input: { prompt: fullPrompt, num_outputs: 1 }
+        model: 'dall-e-3',
+        prompt: fullPrompt,
+        n: 1,
+        size: '1024x1792',
+        quality: 'standard',
+        response_format: 'url'
       })
     });
 
-    if (!startRes.ok) {
-      const err = await startRes.text();
-      return res.status(500).json({ error: 'Erreur API Replicate: ' + err });
+    if (!dalleRes.ok) {
+      const err = await dalleRes.text();
+      return res.status(500).json({ error: 'Erreur DALL-E 3: ' + err });
     }
 
-    const prediction = await startRes.json();
+    const dalleData = await dalleRes.json();
+    const imageUrl = dalleData.data[0].url;
+    return res.json({ images: [imageUrl] });
 
-    // Polling
-    let result = prediction;
-    let attempts = 0;
-    while (result.status !== 'succeeded' && result.status !== 'failed' && attempts < 60) {
-      await new Promise(r => setTimeout(r, 2000));
-      const pollRes = await fetch('https://api.replicate.com/v1/predictions/' + result.id, {
-        headers: { 'Authorization': 'Token ' + REPLICATE_TOKEN }
-      });
-      result = await pollRes.json();
-      attempts++;
-    }
-
-    if (result.status === 'succeeded' && result.output && result.output.length > 0) {
-      return res.json({ images: result.output });
-    } else {
-      return res.status(500).json({ error: 'Génération échouée. Veuillez réessayer.' });
-    }
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// === GÉNÉRATION IMAGE HD (DALL-E 3) ===
 app.post('/api/generate/hd', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
 
   try {
-    const startRes = await fetch('https://api.replicate.com/v1/models/openai/dall-e-3/predictions', {
+    const fullPrompt = `High quality comic book illustration, HD colorful BD style, vertical 9:16 format, ultra detailed vibrant artwork, professional illustration: ${prompt}`;
+    const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: {
-        'Authorization': 'Token ' + REPLICATE_TOKEN,
-        'Content-Type': 'application/json',
-        'Prefer': 'wait'
+        'Authorization': 'Bearer ' + OPENAI_KEY,
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        input: {
-          prompt: prompt,
-          quality: 'hd',
-          size: '1024x1792'
-        }
+        model: 'dall-e-3',
+        prompt: fullPrompt,
+        n: 1,
+        size: '1024x1792',
+        quality: 'hd',
+        response_format: 'url'
       })
     });
 
-    if (!startRes.ok) {
-      const err = await startRes.text();
-      return res.status(500).json({ error: 'Erreur API DALL-E 3: ' + err });
+    if (!dalleRes.ok) {
+      const err = await dalleRes.text();
+      return res.status(500).json({ error: 'Erreur DALL-E 3 HD: ' + err });
     }
 
-    const prediction = await startRes.json();
+    const dalleData = await dalleRes.json();
+    const imageUrl = dalleData.data[0].url;
+    return res.json({ images: [imageUrl] });
 
-    // Polling
-    let result = prediction;
-    let attempts = 0;
-    while (result.status !== 'succeeded' && result.status !== 'failed' && attempts < 60) {
-      await new Promise(r => setTimeout(r, 2000));
-      const pollRes = await fetch('https://api.replicate.com/v1/predictions/' + result.id, {
-        headers: { 'Authorization': 'Token ' + REPLICATE_TOKEN }
-      });
-      result = await pollRes.json();
-      attempts++;
-    }
-
-    if (result.status === 'succeeded' && result.output) {
-      const images = Array.isArray(result.output) ? result.output : [result.output];
-      return res.json({ images });
-    } else {
-      return res.status(500).json({ error: 'Génération DALL-E 3 échouée. Veuillez réessayer.' });
-    }
   } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// === GÉNÉRATION VOIX OFF (OpenAI TTS) ===
+app.post('/api/tts', async (req, res) => {
+  const { text, voice = 'nova' } = req.body;
+  if (!text) return res.status(400).json({ error: 'Texte requis' });
+
+  try {
+    const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + OPENAI_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        input: text,
+        voice: voice, // alloy, echo, fable, onyx, nova, shimmer
+        response_format: 'mp3'
+      })
+    });
+
+    if (!ttsRes.ok) {
+      const err = await ttsRes.text();
+      return res.status(500).json({ error: 'Erreur TTS: ' + err });
+    }
+
+    const audioBuffer = await ttsRes.arrayBuffer();
+    const audioBase64 = Buffer.from(audioBuffer).toString('base64');
+    return res.json({ audio: audioBase64, format: 'mp3' });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// === GÉNÉRATION VIDÉO COMPLÈTE (Images + Voix + Assemblage FFmpeg) ===
+app.post('/api/generer-video', async (req, res) => {
+  const { histoire, qualite = 'standard', voix = 'nova' } = req.body;
+  if (!histoire) return res.status(400).json({ error: 'Histoire requise' });
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sonia-'));
+  
+  try {
+    // Vérifier si FFmpeg est disponible
+    let ffmpegAvailable = false;
+    try {
+      execSync('ffmpeg -version', { stdio: 'ignore' });
+      ffmpegAvailable = true;
+    } catch(e) {
+      ffmpegAvailable = false;
+    }
+
+    const pages = [{ 
+      numero: 0, 
+      titre_page: 'Couverture',
+      description_image: histoire.couverture.description_image,
+      narration_voix: histoire.couverture.narration_voix || histoire.couverture.texte_couverture
+    }, ...histoire.pages];
+
+    const imageFiles = [];
+    const audioFiles = [];
+
+    // Générer les images et voix en parallèle pour chaque page
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      
+      // Générer l'image
+      const imgPrompt = i === 0 
+        ? `Comic book cover, title "${histoire.titre}", colorful BD style, vertical 9:16: ${page.description_image}`
+        : page.description_image;
+      
+      const quality = qualite === 'hd' ? 'hd' : 'standard';
+      const fullPrompt = `Comic book illustration, colorful BD style, vertical 9:16 format, vibrant colors: ${imgPrompt}`;
+      
+      const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + OPENAI_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt: fullPrompt,
+          n: 1,
+          size: '1024x1792',
+          quality: quality,
+          response_format: 'url'
+        })
+      });
+
+      if (!dalleRes.ok) throw new Error('Erreur image page ' + i);
+      const dalleData = await dalleRes.json();
+      const imageUrl = dalleData.data[0].url;
+
+      // Télécharger l'image
+      const imgRes = await fetch(imageUrl);
+      const imgBuffer = await imgRes.arrayBuffer();
+      const imgPath = path.join(tmpDir, `page_${i}.jpg`);
+      fs.writeFileSync(imgPath, Buffer.from(imgBuffer));
+      imageFiles.push(imgPath);
+
+      // Générer la voix off
+      const voixText = page.narration_voix || page.narration || page.dialogue || '';
+      if (voixText && ffmpegAvailable) {
+        const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + OPENAI_KEY,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'tts-1',
+            input: voixText,
+            voice: voix,
+            response_format: 'mp3'
+          })
+        });
+
+        if (ttsRes.ok) {
+          const audioBuffer = await ttsRes.arrayBuffer();
+          const audioPath = path.join(tmpDir, `audio_${i}.mp3`);
+          fs.writeFileSync(audioPath, Buffer.from(audioBuffer));
+          audioFiles.push(audioPath);
+        } else {
+          audioFiles.push(null);
+        }
+      } else {
+        audioFiles.push(null);
+      }
+    }
+
+    if (!ffmpegAvailable) {
+      // Sans FFmpeg: retourner les images en base64
+      const imagesBase64 = imageFiles.map(f => {
+        const buf = fs.readFileSync(f);
+        return 'data:image/jpeg;base64,' + buf.toString('base64');
+      });
+      
+      // Nettoyer
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      
+      return res.json({ 
+        type: 'images',
+        images: imagesBase64,
+        titre: histoire.titre,
+        message: 'FFmpeg non disponible - images générées'
+      });
+    }
+
+    // Avec FFmpeg: assembler la vidéo MP4
+    const videoPath = path.join(tmpDir, 'video_final.mp4');
+    const segmentFiles = [];
+
+    for (let i = 0; i < imageFiles.length; i++) {
+      const segPath = path.join(tmpDir, `segment_${i}.mp4`);
+      
+      if (audioFiles[i]) {
+        // Durée basée sur l'audio
+        execSync(`ffmpeg -loop 1 -i "${imageFiles[i]}" -i "${audioFiles[i]}" -c:v libx264 -tune stillimage -c:a aac -b:a 128k -pix_fmt yuv420p -shortest -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" "${segPath}" -y 2>/dev/null`);
+      } else {
+        // Durée fixe de 4 secondes
+        execSync(`ffmpeg -loop 1 -i "${imageFiles[i]}" -c:v libx264 -t 4 -pix_fmt yuv420p -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" "${segPath}" -y 2>/dev/null`);
+      }
+      segmentFiles.push(segPath);
+    }
+
+    // Créer le fichier de liste pour la concaténation
+    const listPath = path.join(tmpDir, 'list.txt');
+    const listContent = segmentFiles.map(f => `file '${f}'`).join('\n');
+    fs.writeFileSync(listPath, listContent);
+
+    // Concaténer tous les segments
+    execSync(`ffmpeg -f concat -safe 0 -i "${listPath}" -c copy "${videoPath}" -y 2>/dev/null`);
+
+    // Lire la vidéo et l'envoyer
+    const videoBuffer = fs.readFileSync(videoPath);
+    const videoBase64 = videoBuffer.toString('base64');
+
+    // Nettoyer
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    return res.json({
+      type: 'video',
+      video: videoBase64,
+      format: 'mp4',
+      titre: histoire.titre
+    });
+
+  } catch (err) {
+    // Nettoyer en cas d'erreur
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(e) {}
     return res.status(500).json({ error: err.message });
   }
 });
@@ -215,10 +393,7 @@ app.get('/api/music', async (req, res) => {
   const { q, genre, limit = 10 } = req.query;
 
   try {
-    // Jamendo API - client_id public gratuit
-    const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
     let url = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=${limit}&audioformat=mp32&include=musicinfo&order=popularity_total`;
-
     if (q) url += `&search=${encodeURIComponent(q)}`;
     if (genre) url += `&tags=${encodeURIComponent(genre)}`;
 
@@ -240,19 +415,13 @@ app.get('/api/music', async (req, res) => {
       }));
       return res.json({ tracks });
     } else {
-      // Si pas de résultat, retourner des musiques populaires
       const fallbackUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=${limit}&audioformat=mp32&order=popularity_total`;
       const fallRes = await fetch(fallbackUrl);
       const fallData = await fallRes.json();
       const tracks = (fallData.results || []).map(t => ({
-        id: t.id,
-        name: t.name,
-        artist_name: t.artist_name,
-        duration: t.duration,
-        audio: t.audio,
-        audiodownload: t.audiodownload,
-        shareurl: t.shareurl,
-        image: t.image
+        id: t.id, name: t.name, artist_name: t.artist_name,
+        duration: t.duration, audio: t.audio, audiodownload: t.audiodownload,
+        shareurl: t.shareurl, image: t.image
       }));
       return res.json({ tracks });
     }
@@ -262,13 +431,6 @@ app.get('/api/music', async (req, res) => {
 });
 
 // === GOOGLE OAUTH ===
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '376154181732-a842jan6p193tea2fgfctiq26ngphi44.apps.googleusercontent.com';
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://sonia-video-bd-site.onrender.com';
-const PROXY_URL = process.env.PROXY_URL || 'https://sonia-proxy.onrender.com';
-const REDIRECT_URI = PROXY_URL + '/auth/callback';
-
-// Route: initier la connexion Google
 app.get('/auth/google', (req, res) => {
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
@@ -281,7 +443,6 @@ app.get('/auth/google', (req, res) => {
   res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString());
 });
 
-// Route: callback Google OAuth - échange le code contre un token
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.redirect(FRONTEND_URL + '?error=no_code');
@@ -291,8 +452,7 @@ app.get('/auth/callback', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        code,
-        client_id: GOOGLE_CLIENT_ID,
+        code, client_id: GOOGLE_CLIENT_ID,
         client_secret: GOOGLE_CLIENT_SECRET,
         redirect_uri: REDIRECT_URI,
         grant_type: 'authorization_code'
@@ -300,22 +460,16 @@ app.get('/auth/callback', async (req, res) => {
     });
 
     const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) {
-      return res.redirect(FRONTEND_URL + '?error=token_failed');
-    }
+    if (!tokenData.access_token) return res.redirect(FRONTEND_URL + '?error=token_failed');
 
-    // Récupérer les infos utilisateur
     const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: { 'Authorization': 'Bearer ' + tokenData.access_token }
     });
     const user = await userRes.json();
 
-    // Rediriger vers le frontend avec les infos utilisateur encodées
     const userParam = encodeURIComponent(JSON.stringify({
-      name: user.name,
-      email: user.email,
-      picture: user.picture,
-      id: user.id
+      name: user.name, email: user.email,
+      picture: user.picture, id: user.id
     }));
     res.redirect(FRONTEND_URL + '?user=' + userParam);
 
@@ -325,4 +479,4 @@ app.get('/auth/callback', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Sonia Proxy running on port ' + PORT));
+app.listen(PORT, () => console.log('Sonia Proxy v2 running on port ' + PORT));
