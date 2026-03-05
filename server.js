@@ -22,8 +22,30 @@ const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
 // Health check
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v3 - Replicate DALL-E 3 + OpenAI TTS + FFmpeg.wasm' }));
 
+// === HELPER: Nettoyer prompt pour éviter les erreurs de contenu sensible ===
+function nettoyerPrompt(prompt) {
+  // Remplacer les mots potentiellement sensibles par des équivalents neutres
+  const remplacements = [
+    [/\b(sexy|sexi|nude|naked|nue|nu |déshabillé|déshabillée|lingerie|bikini|sous-vêtement)\b/gi, 'habillé'],
+    [/\b(violence|sang|mort|tuer|assassin|blessure|arme|pistolet|fusil|couteau|bombe)\b/gi, 'aventure'],
+    [/\b(drogue|alcool|cigarette|fumer|cannabis|cocaïne|héroïne)\b/gi, 'boisson'],
+    [/\b(haine|racisme|raciste|discrimination|insulte)\b/gi, 'amitié'],
+    [/\b(terrorisme|terroriste|attentat|explosion)\b/gi, 'action'],
+  ];
+  let cleaned = prompt;
+  for (const [pattern, replacement] of remplacements) {
+    cleaned = cleaned.replace(pattern, replacement);
+  }
+  return cleaned;
+}
+
 // === HELPER: Générer image via Replicate DALL-E 3 ===
 async function genererImageReplicate(prompt) {
+  // Nettoyer le prompt avant envoi
+  const promptNettoye = nettoyerPrompt(prompt);
+  // Ajouter un préfixe de style BD pour orienter la génération
+  const promptFinal = promptNettoye + ', style bande dessinée colorée, illustration professionnelle, adapté à tous publics';
+
   // Lancer la prédiction
   const startRes = await fetch('https://api.replicate.com/v1/models/openai/dall-e-3/predictions', {
     method: 'POST',
@@ -34,7 +56,7 @@ async function genererImageReplicate(prompt) {
     },
     body: JSON.stringify({
       input: {
-        prompt: prompt,
+        prompt: promptFinal,
         size: '1024x1792',
         quality: 'standard',
         style: 'vivid'
@@ -44,6 +66,9 @@ async function genererImageReplicate(prompt) {
 
   if (!startRes.ok) {
     const err = await startRes.text();
+    if (err.includes('E005') || err.includes('sensitive') || err.includes('flagged')) {
+      throw new Error('CONTENU_SENSIBLE');
+    }
     throw new Error('Erreur Replicate DALL-E 3: ' + err);
   }
 
@@ -67,7 +92,12 @@ async function genererImageReplicate(prompt) {
       return pollData.output[0];
     }
     if (pollData.status === 'failed' || pollData.status === 'canceled') {
-      throw new Error('Replicate échec: ' + (pollData.error || pollData.status));
+      const errMsg = pollData.error || pollData.status || '';
+      // Erreur E005 = contenu sensible → réessayer avec prompt générique
+      if (errMsg.includes('E005') || errMsg.includes('sensitive') || errMsg.includes('flagged')) {
+        throw new Error('CONTENU_SENSIBLE');
+      }
+      throw new Error('Replicate échec: ' + errMsg);
     }
     attempts++;
   }
@@ -174,6 +204,22 @@ Réponds en JSON avec cette structure exacte :
   }
 });
 
+// === HELPER: Générer image avec fallback si contenu sensible ===
+async function genererImageAvecFallback(prompt, style = 'standard') {
+  try {
+    return await genererImageReplicate(prompt);
+  } catch (err) {
+    if (err.message === 'CONTENU_SENSIBLE') {
+      // Réessayer avec un prompt générique et sûr
+      const promptFallback = style === 'hd'
+        ? 'High quality comic book illustration, HD colorful BD style, vertical 9:16 format, two friendly characters having an adventure in a colorful world, professional illustration'
+        : 'Comic book illustration, colorful BD style, vertical 9:16 format, two friendly characters smiling in a sunny landscape, vibrant colors, detailed artwork';
+      return await genererImageReplicate(promptFallback);
+    }
+    throw err;
+  }
+}
+
 // === GÉNÉRATION IMAGE DALL-E 3 via Replicate (Standard) ===
 app.post('/api/generate/standard', async (req, res) => {
   const { prompt } = req.body;
@@ -181,7 +227,7 @@ app.post('/api/generate/standard', async (req, res) => {
 
   try {
     const fullPrompt = `Comic book illustration, colorful BD style, vertical 9:16 format, vibrant colors, detailed artwork: ${prompt}`;
-    const imageUrl = await genererImageReplicate(fullPrompt);
+    const imageUrl = await genererImageAvecFallback(fullPrompt, 'standard');
     return res.json({ images: [imageUrl] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -195,7 +241,7 @@ app.post('/api/generate/hd', async (req, res) => {
 
   try {
     const fullPrompt = `High quality comic book illustration, HD colorful BD style, vertical 9:16 format, ultra detailed vibrant artwork, professional illustration: ${prompt}`;
-    const imageUrl = await genererImageReplicate(fullPrompt);
+    const imageUrl = await genererImageAvecFallback(fullPrompt, 'hd');
     return res.json({ images: [imageUrl] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -267,7 +313,20 @@ app.post('/api/generer-video', async (req, res) => {
 
       const fullPrompt = `Comic book illustration, colorful BD style, vertical 9:16 format, vibrant colors, professional comic art: ${imgPrompt}`;
 
-      const imageUrl = await genererImageReplicate(fullPrompt);
+      let imageUrl;
+      try {
+        imageUrl = await genererImageReplicate(fullPrompt);
+      } catch (imgErr) {
+        if (imgErr.message === 'CONTENU_SENSIBLE') {
+          // Fallback avec prompt générique
+          const fallbackPrompt = i === 0
+            ? `Comic book cover, colorful BD style, vertical 9:16, two friendly characters on an adventure, vibrant colors, professional comic art`
+            : `Comic book page ${i}, BD illustration style, colorful, friendly characters in action, vibrant colors`;
+          imageUrl = await genererImageReplicate(fallbackPrompt);
+        } else {
+          throw imgErr;
+        }
+      }
 
       // Télécharger l'image et la convertir en base64
       const imgRes = await fetch(imageUrl);
