@@ -112,5 +112,56 @@ app.post('/api/generate/hd', async (req, res) => {
   }
 });
 
+// === MUSIQUES LIBRES DE DROITS (Jamendo API) ===
+app.get('/api/music', async (req, res) => {
+  const { q, genre, limit = 10 } = req.query;
+
+  try {
+    // Jamendo API - client_id public gratuit
+    const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
+    let url = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=${limit}&audioformat=mp32&include=musicinfo&order=popularity_total`;
+
+    if (q) url += `&search=${encodeURIComponent(q)}`;
+    if (genre) url += `&tags=${encodeURIComponent(genre)}`;
+
+    const jamRes = await fetch(url);
+    if (!jamRes.ok) throw new Error('Erreur API Jamendo: ' + jamRes.status);
+
+    const jamData = await jamRes.json();
+
+    if (jamData.results && jamData.results.length > 0) {
+      const tracks = jamData.results.map(t => ({
+        id: t.id,
+        name: t.name,
+        artist_name: t.artist_name,
+        duration: t.duration,
+        audio: t.audio,
+        audiodownload: t.audiodownload,
+        shareurl: t.shareurl,
+        image: t.image
+      }));
+      return res.json({ tracks });
+    } else {
+      // Si pas de résultat, retourner des musiques populaires
+      const fallbackUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=${limit}&audioformat=mp32&order=popularity_total`;
+      const fallRes = await fetch(fallbackUrl);
+      const fallData = await fallRes.json();
+      const tracks = (fallData.results || []).map(t => ({
+        id: t.id,
+        name: t.name,
+        artist_name: t.artist_name,
+        duration: t.duration,
+        audio: t.audio,
+        audiodownload: t.audiodownload,
+        shareurl: t.shareurl,
+        image: t.image
+      }));
+      return res.json({ tracks });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Sonia Proxy running on port ' + PORT));
