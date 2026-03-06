@@ -58,9 +58,9 @@ async function genererImagePollinations(prompt) {
 async function genererImageReplicate(prompt, isHD = false) {
   const promptNettoye = nettoyerPrompt(prompt);
   
-  // Prompt ultra-optimisé pour un vrai style BD franco-belge (Tintin/Astérix)
-  const prefix = 'Comic book illustration in classic French-Belgian BD style (like Tintin, Asterix, Spirou). Single scene, NOT a grid layout. ';
-  const suffix = ' Art style: flat colors, clean bold black ink outlines, cartoon proportions, expressive faces, simplified backgrounds with strong colors, NO realistic shading, NO photorealism, cel-shaded style, bright saturated colors like Hergé ligne claire style, white speech bubbles with black text outlines (empty inside), 9:16 vertical format, professional BD illustration quality.';
+  // Prompt optimisé pour style comic book américain moderne (Marvel/DC/Webtoon)
+  const prefix = 'Modern American comic book cover illustration, single scene portrait format. ';
+  const suffix = ' Art style: professional comic book illustration, semi-realistic cartoon style, bold clean ink outlines, dramatic cinematic lighting, deep rich colors with strong contrast, expressive character faces with detailed eyes, dynamic composition, dark atmospheric background with city lights or dramatic sky, vibrant saturated colors, bold white text with dark outline for title at top, subtitle text at bottom in yellow or white, 9:16 vertical portrait format, Marvel Comics / DC Comics quality, professional graphic novel cover art. NO photorealism, stylized illustration only.';
   const promptFinal = (prefix + promptNettoye + suffix).substring(0, 4000);
 
   const MAX_RETRIES = 3;
@@ -311,8 +311,8 @@ async function genererImageAvecFallback(prompt, style = 'standard') {
     if (err.message === 'CONTENU_SENSIBLE') {
       // Réessayer avec un prompt générique et sûr
       const promptFallback = style === 'hd'
-        ? 'French-Belgian BD comic illustration HD, Tintin Herge ligne claire style, two cartoon characters on an adventure, flat colors, bold ink outlines, bright saturated colors, NO photorealism, 9:16 vertical'
-        : 'French-Belgian BD comic illustration, Tintin Herge ligne claire style, two cartoon characters smiling, flat colors, bold ink outlines, bright saturated colors, NO photorealism, 9:16 vertical';
+        ? 'Modern comic book cover illustration HD, two cartoon characters on an adventure, dramatic cinematic lighting, bold ink outlines, vibrant saturated colors, Marvel DC style, 9:16 vertical portrait'
+        : 'Modern comic book cover illustration, two cartoon characters smiling, dramatic lighting, bold ink outlines, vibrant saturated colors, Marvel DC style, 9:16 vertical portrait';
       return await genererImageReplicate(promptFallback);
     }
     throw err;
@@ -325,7 +325,7 @@ app.post('/api/generate/standard', async (req, res) => {
   if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
 
   try {
-    const fullPrompt = `French-Belgian BD comic illustration, Tintin Herge ligne claire style, flat colors, bold black ink outlines, NO photorealism, bright saturated colors, cartoon proportions, 9:16 vertical format: ${prompt}`;
+    const fullPrompt = `Modern American comic book illustration, Marvel DC style, semi-realistic cartoon, bold ink outlines, dramatic cinematic lighting, vibrant saturated colors, expressive characters, 9:16 vertical portrait format: ${prompt}`;
     const imageUrl = await genererImageAvecFallback(fullPrompt, 'standard');
     return res.json({ images: [imageUrl] });
   } catch (err) {
@@ -339,7 +339,7 @@ app.post('/api/generate/hd', async (req, res) => {
   if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
 
   try {
-    const fullPrompt = `French-Belgian BD comic illustration HD, Tintin Herge ligne claire style, flat colors, bold black ink outlines, NO photorealism, bright saturated colors, cartoon proportions, 9:16 vertical format: ${prompt}`;
+    const fullPrompt = `Modern American comic book illustration HD, Marvel DC style, semi-realistic cartoon, bold ink outlines, dramatic cinematic lighting, vibrant saturated colors, expressive characters, 9:16 vertical portrait format: ${prompt}`;
     const imageUrl = await genererImageAvecFallback(fullPrompt, 'hd');
     return res.json({ images: [imageUrl] });
   } catch (err) {
@@ -407,10 +407,10 @@ app.post('/api/generer-video', async (req, res) => {
 
       // Générer l'image via DALL-E 3 style BD franco-belge
       const imgPrompt = i === 0
-        ? `Comic book cover in Tintin Herge ligne claire style, title "${histoire.titre}", flat colors, bold ink outlines, NO photorealism, bright saturated cartoon style, 9:16 vertical: ${page.description_image}`
-        : `French-Belgian BD comic page ${i} in Tintin Herge ligne claire style, flat colors, bold ink outlines, NO photorealism, bright saturated cartoon style, 9:16 vertical: ${page.description_image}`;
+        ? `Modern comic book cover, title "${histoire.titre}", dramatic cinematic lighting, bold ink outlines, vibrant saturated colors, expressive character, dark atmospheric background, Marvel DC style, 9:16 vertical: ${page.description_image}`
+        : `Modern comic book page ${i}, dramatic cinematic lighting, bold ink outlines, vibrant saturated colors, expressive characters, Marvel DC style, 9:16 vertical: ${page.description_image}`;
 
-      const fullPrompt = `French-Belgian BD comic illustration, Tintin Herge ligne claire style, flat colors, bold black ink outlines, NO photorealism, bright saturated colors, cartoon proportions, expressive faces, 9:16 vertical format: ${imgPrompt}`;
+      const fullPrompt = `Modern American comic book illustration, Marvel DC style, semi-realistic cartoon, bold ink outlines, dramatic cinematic lighting, vibrant saturated colors, expressive characters, 9:16 vertical portrait format: ${imgPrompt}`;
 
       let imageUrl;
       try {
