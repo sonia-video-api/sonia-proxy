@@ -438,7 +438,35 @@ app.post('/api/generer-video', async (req, res) => {
       // Télécharger l'image et la convertir en base64
       const imgRes = await fetch(imageUrl);
       const imgBuffer = await imgRes.arrayBuffer();
-      const imageBase64 = 'data:image/png;base64,' + Buffer.from(imgBuffer).toString('base64');
+      let imageBase64Raw = Buffer.from(imgBuffer).toString('base64');
+
+      // Pour la couverture (i===0) : ajouter le titre et sous-titre via Python
+      if (i === 0) {
+        try {
+          const sousTitre = histoire.couverture.sous_titre || histoire.couverture.accroche || '';
+          const pythonInput = JSON.stringify({
+            image: imageBase64Raw,
+            titre: histoire.titre,
+            sous_titre: sousTitre
+          });
+          const pythonResult = await new Promise((resolve, reject) => {
+            const scriptPath = path.join(__dirname, 'add_text_cover.py');
+            const proc = exec(`python3 ${scriptPath}`, (err, stdout, stderr) => {
+              if (err) reject(err);
+              else resolve(stdout);
+            });
+            proc.stdin.write(pythonInput);
+            proc.stdin.end();
+          });
+          const parsed = JSON.parse(pythonResult);
+          imageBase64Raw = parsed.image;
+          console.log('Texte ajouté sur la couverture avec succès');
+        } catch (pyErr) {
+          console.warn('Erreur ajout texte couverture:', pyErr.message);
+        }
+      }
+
+      const imageBase64 = 'data:image/jpeg;base64,' + imageBase64Raw;
 
       // Générer la voix off TTS
       let audioBase64 = null;
