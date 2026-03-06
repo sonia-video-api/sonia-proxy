@@ -18,6 +18,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://sonia-video-bd-site.on
 const PROXY_URL = process.env.PROXY_URL || 'https://sonia-proxy.onrender.com';
 const REDIRECT_URI = PROXY_URL + '/auth/callback';
 const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
+const POLLINATIONS_API_KEY = process.env.POLLINATIONS_API_KEY || 'pk_N4V5yUJoxX7x1HQ5';
 
 // Health check
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v6 - DALL-E 3 HD (qualité BD pro) + OpenAI TTS + Recherche Web' }));
@@ -39,13 +40,13 @@ function nettoyerPrompt(prompt) {
   return cleaned;
 }
 
-// === HELPER: Générer image via Pollinations.ai (gratuit, fallback) ===
+// === HELPER: Générer image via Pollinations.ai (avec clé API) ===
 async function genererImagePollinations(prompt) {
   const promptNettoye = nettoyerPrompt(prompt);
   const encodedPrompt = encodeURIComponent(promptNettoye.substring(0, 500));
   const seed = Math.floor(Math.random() * 999999);
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=1344&model=flux&seed=${seed}&nologo=true`;
-  // Pollinations retourne directement l'image
+  // Avec clé API : pas de rate limit, meilleure qualité
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=1344&model=flux&seed=${seed}&nologo=true&token=${POLLINATIONS_API_KEY}`;
   return url;
 }
 
