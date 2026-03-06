@@ -470,6 +470,149 @@ app.post('/api/generer-video', async (req, res) => {
   }
 });
 
+// === PROFIL RÉSEAU SOCIAL (TikTok, YouTube, Twitter/X) ===
+app.post('/api/profil-social', async (req, res) => {
+  const { username, plateforme = 'tiktok' } = req.body;
+  if (!username) return res.status(400).json({ error: 'Nom d\'utilisateur requis' });
+
+  const nomNettoye = username.replace(/^@/, '').trim();
+
+  try {
+    let profil = { nom: nomNettoye, bio: '', followers: '', avatar: '', plateforme, videos: [] };
+
+    if (plateforme === 'tiktok') {
+      // Scraper TikTok
+      const ttRes = await fetch(`https://www.tiktok.com/@${nomNettoye}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8'
+        }
+      });
+      if (ttRes.ok) {
+        const html = await ttRes.text();
+        const match = html.match(/id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+        if (match) {
+          const data = JSON.parse(match[1]);
+          const findAll = (d, key, res = []) => {
+            if (typeof d === 'object' && d !== null) {
+              if (Array.isArray(d)) d.forEach(v => findAll(v, key, res));
+              else { if (key in d) res.push(d[key]); Object.values(d).forEach(v => findAll(v, key, res)); }
+            }
+            return res;
+          };
+          profil.nom = findAll(data, 'nickname')[0] || nomNettoye;
+          profil.bio = findAll(data, 'signature')[0] || '';
+          profil.followers = findAll(data, 'followerCount')[0] || '';
+          profil.avatar = findAll(data, 'avatarLarger')[0] || '';
+          profil.likes = findAll(data, 'heartCount')[0] || '';
+          // Vidéos récentes
+          const descs = findAll(data, 'desc').filter(d => d && d.length > 5);
+          profil.videos = descs.slice(0, 5);
+        }
+      }
+    } else if (plateforme === 'youtube') {
+      // Scraper YouTube
+      const ytRes = await fetch(`https://www.youtube.com/@${nomNettoye}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      });
+      if (ytRes.ok) {
+        const html = await ytRes.text();
+        const nameMatch = html.match(/"channelMetadataRenderer"[\s\S]*?"title":"([^"]+)"/);
+        const descMatch = html.match(/"description":"([^"]{0,300})"/);
+        const subsMatch = html.match(/"subscriberCountText"[\s\S]*?"simpleText":"([^"]+)"/);
+        const avatarMatch = html.match(/"avatar"[\s\S]*?"url":"(https:\/\/yt3[^"]+)"/);
+        const videoMatches = [...html.matchAll(/"title":{"runs":\[{"text":"([^"]{5,100})"}\]/g)].slice(0, 5);
+        if (nameMatch) profil.nom = nameMatch[1];
+        if (descMatch) profil.bio = descMatch[1].replace(/\\n/g, ' ').substring(0, 200);
+        if (subsMatch) profil.followers = subsMatch[1];
+        if (avatarMatch) profil.avatar = avatarMatch[1];
+        profil.videos = videoMatches.map(m => m[1]).filter(v => v && !v.includes('\\'));
+      }
+    } else if (plateforme === 'twitter') {
+      // Pour Twitter/X : utiliser GPT pour imaginer le profil
+      profil.bio = `Utilisateur Twitter/X @${nomNettoye}`;
+      profil.plateforme = 'twitter';
+    }
+
+    // Générer l'histoire BD basée sur le profil avec GPT
+    const contexte = `
+Plateforme: ${profil.plateforme.toUpperCase()}
+Nom d'utilisateur: @${profil.nom}
+Bio/Description: ${profil.bio || 'Non disponible'}
+Followers/Abonnés: ${profil.followers || 'Non disponible'}
+Contenu récent: ${profil.videos.length > 0 ? profil.videos.join(', ') : 'Non disponible'}
+`;
+
+    const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + OPENAI_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.9,
+        messages: [
+          {
+            role: 'system',
+            content: `Tu es un scénariste créatif qui crée des histoires BD humoristiques et bienveillantes basées sur des profils de réseaux sociaux.
+Tu crées une histoire fun, positive et flatteuse pour le créateur de contenu.
+Réponds UNIQUEMENT en JSON valide, sans markdown.`
+          },
+          {
+            role: 'user',
+            content: `Crée une histoire BD complète et amusante basée sur ce profil de réseau social :
+${contexte}
+
+L'histoire doit mettre en scène @${profil.nom} comme héros/héroïne de la BD, en lien avec son contenu et sa communauté.
+
+Réponds en JSON avec cette structure exacte :
+{
+  "titre": "Titre accrocheur de la BD avec @${profil.nom}",
+  "genre": "Comédie / Aventure / etc.",
+  "personnages": "Description des personnages (incluant @${profil.nom} comme héros)",
+  "couverture": {
+    "description_image": "Description en anglais pour générer l'image de couverture (style comic book coloré, vertical 9:16, avec @${profil.nom} comme personnage principal)",
+    "texte_couverture": "Phrase d'accroche sur la couverture",
+    "narration_voix": "Résumé court et accrocheur de l'histoire en 2-3 phrases (environ 10 secondes à voix haute)"
+  },
+  "pages": [
+    {
+      "numero": 1,
+      "titre_page": "Titre court",
+      "description_image": "Description en anglais pour l'image (style comic book, vertical 9:16)",
+      "narration": "Narration en français",
+      "dialogue": "Dialogue en français",
+      "narration_voix": "Narration vivante 4-5 phrases (~15 secondes)"
+    },
+    {"numero": 2, "titre_page": "Titre", "description_image": "Description anglais", "narration": "Narration fr", "dialogue": "Dialogue fr", "narration_voix": "Narration 4-5 phrases"},
+    {"numero": 3, "titre_page": "Titre", "description_image": "Description anglais", "narration": "Narration fr", "dialogue": "Dialogue fr", "narration_voix": "Narration 4-5 phrases"},
+    {"numero": 4, "titre_page": "Titre", "description_image": "Description anglais", "narration": "Narration fr", "dialogue": "Dialogue fr", "narration_voix": "Conclusion 4-5 phrases"}
+  ]
+}`
+          }
+        ]
+      })
+    });
+
+    if (!gptRes.ok) throw new Error('Erreur GPT: ' + await gptRes.text());
+    const gptData = await gptRes.json();
+    let histoire;
+    try {
+      histoire = JSON.parse(gptData.choices[0].message.content);
+    } catch(e) {
+      const jsonMatch = gptData.choices[0].message.content.match(/{[\s\S]+}/);
+      histoire = JSON.parse(jsonMatch[0]);
+    }
+
+    return res.json({
+      profil,
+      histoire,
+      message: `Histoire BD créée pour @${profil.nom} (${profil.plateforme})`
+    });
+
+  } catch (err) {
+    return res.status(500).json({ error: 'Erreur profil social: ' + err.message });
+  }
+});
+
 // === MUSIQUES LIBRES DE DROITS (Jamendo API) ===
 app.get('/api/music', async (req, res) => {
   const { q, genre, limit = 10 } = req.query;
