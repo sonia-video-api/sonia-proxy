@@ -72,9 +72,66 @@ async function genererImageReplicate(prompt) {
     })
   });
 
+  // Gestion du rate limit 429 - retry automatique
   if (!startRes.ok) {
-    const err = await startRes.text();
-    throw new Error('Erreur Replicate SDXL: ' + err);
+    const errText = await startRes.text();
+    let errData = {};
+    try { errData = JSON.parse(errText); } catch(e) {}
+    
+    if (startRes.status === 429) {
+      // Rate limit - attendre et réessayer jusqu'à 3 fois
+      const retryAfter = (errData.retry_after || 10) * 1000 + 2000; // +2s de marge
+      for (let retry = 0; retry < 3; retry++) {
+        await new Promise(r => setTimeout(r, retryAfter));
+        const retryRes = await fetch('https://api.replicate.com/v1/predictions', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + REPLICATE_TOKEN,
+            'Content-Type': 'application/json',
+            'Prefer': 'wait'
+          },
+          body: JSON.stringify({
+            version: '7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc',
+            input: {
+              prompt: promptFinal,
+              negative_prompt: 'nsfw, nude, violence, gore, ugly, blurry, bad quality, watermark',
+              width: 768,
+              height: 1344,
+              num_outputs: 1,
+              scheduler: 'K_EULER',
+              num_inference_steps: 30,
+              guidance_scale: 7.5,
+              refine: 'expert_ensemble_refiner',
+              high_noise_frac: 0.8
+            }
+          })
+        });
+        if (retryRes.ok) {
+          const retryData = await retryRes.json();
+          if (retryData.status === 'succeeded' && retryData.output && retryData.output[0]) {
+            return retryData.output[0];
+          }
+          // Continuer avec le polling normal
+          const predId2 = retryData.id;
+          let att2 = 0;
+          while (att2 < 60) {
+            await new Promise(r => setTimeout(r, 3000));
+            const p2 = await fetch(`https://api.replicate.com/v1/predictions/${predId2}`, {
+              headers: { 'Authorization': 'Bearer ' + REPLICATE_TOKEN }
+            });
+            const pd2 = await p2.json();
+            if (pd2.status === 'succeeded' && pd2.output && pd2.output[0]) return pd2.output[0];
+            if (pd2.status === 'failed' || pd2.status === 'canceled') throw new Error('Replicate SDXL échec: ' + (pd2.error || pd2.status));
+            att2++;
+          }
+          throw new Error('Timeout Replicate après 3 minutes');
+        }
+        const retryErr = await retryRes.text();
+        if (retryRes.status !== 429) throw new Error('Erreur Replicate SDXL: ' + retryErr);
+      }
+      throw new Error('Replicate rate limit dépassé - veuillez réessayer dans quelques secondes');
+    }
+    throw new Error('Erreur Replicate SDXL: ' + errText);
   }
 
   const prediction = await startRes.json();
