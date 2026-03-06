@@ -42,8 +42,11 @@ function nettoyerPrompt(prompt) {
 // === HELPER: Générer image via DALL-E 3 (haute qualité, style BD professionnel, retry auto) ===
 async function genererImageReplicate(prompt, isHD = false) {
   const promptNettoye = nettoyerPrompt(prompt);
-  const suffix = '. Style bande dessinée professionnelle française, traits nets et expressifs, couleurs vives et contrastées, cases BD avec bulles de dialogue, art de type Tintin ou Astérix, personnages expressifs, décors détaillés, encrage propre, colorisation professionnelle.';
-  const promptFinal = (promptNettoye + suffix).substring(0, 4000);
+  
+  // Prompt ultra-optimisé pour une vraie page BD professionnelle
+  const prefix = 'Create a professional comic book page layout with 4 panels arranged in a grid. Each panel shows a different scene. ';
+  const suffix = ' Art style: vibrant professional comic book illustration, clean bold ink lines, dynamic compositions, expressive characters with strong emotions, detailed colorful backgrounds, speech bubbles with text, Marvel/DC Comics quality artwork, high contrast colors, dramatic lighting, cinematic angles. Full page comic layout, panels separated by gutters, professional lettering.';
+  const promptFinal = (prefix + promptNettoye + suffix).substring(0, 4000);
 
   const MAX_RETRIES = 3;
   let lastError = null;
