@@ -22,7 +22,7 @@ const POLLINATIONS_API_KEY = process.env.POLLINATIONS_API_KEY || 'pk_N4V5yUJoxX7
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_PUBLISHABLE_KEY = process.env.STRIPE_PUBLISHABLE_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
-const stripe = require('stripe')(STRIPE_SECRET_KEY);
+const stripe = STRIPE_SECRET_KEY ? require('stripe')(STRIPE_SECRET_KEY) : null;
 
 // Health check
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v6 - DALL-E 3 HD (qualité BD pro) + OpenAI TTS + Recherche Web' }));
@@ -740,6 +740,7 @@ const PACKS = {
 
 // Créer une session de paiement Stripe Checkout
 app.post('/api/stripe/create-checkout-session', async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe non configuré' });
   try {
     const { pack, email } = req.body;
     const packInfo = PACKS[pack];
@@ -775,6 +776,7 @@ app.post('/api/stripe/create-checkout-session', async (req, res) => {
 
 // Vérifier le statut d'un paiement
 app.get('/api/stripe/verify-payment/:sessionId', async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe non configuré' });
   try {
     const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
     if (session.payment_status === 'paid') {
