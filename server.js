@@ -19,6 +19,10 @@ const PROXY_URL = process.env.PROXY_URL || 'https://sonia-proxy.onrender.com';
 const REDIRECT_URI = PROXY_URL + '/auth/callback';
 const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
 const POLLINATIONS_API_KEY = process.env.POLLINATIONS_API_KEY || 'pk_N4V5yUJoxX7x1HQ5';
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
+const STRIPE_PUBLISHABLE_KEY = process.env.STRIPE_PUBLISHABLE_KEY || '';
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const stripe = require('stripe')(STRIPE_SECRET_KEY);
 
 // Health check
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v6 - DALL-E 3 HD (qualité BD pro) + OpenAI TTS + Recherche Web' }));
@@ -715,6 +719,94 @@ app.get('/auth/callback', async (req, res) => {
   } catch (err) {
     res.redirect(FRONTEND_URL + '?error=' + encodeURIComponent(err.message));
   }
+});
+
+// ============================================================
+// === STRIPE PAIEMENTS ===
+// ============================================================
+
+// Retourner la clé publique Stripe au frontend
+app.get('/api/stripe/config', (req, res) => {
+  res.json({ publishableKey: STRIPE_PUBLISHABLE_KEY });
+});
+
+// Packs disponibles
+const PACKS = {
+  starter: { name: 'Pack Starter', bds: 5, price: 499, description: '5 BD vidéos' },
+  standard: { name: 'Pack Standard', bds: 10, price: 899, description: '10 BD vidéos' },
+  pro: { name: 'Pack Pro', bds: 20, price: 1999, description: '20 BD vidéos' },
+  business: { name: 'Pack Business', bds: 40, price: 3499, description: '40 BD vidéos' },
+};
+
+// Créer une session de paiement Stripe Checkout
+app.post('/api/stripe/create-checkout-session', async (req, res) => {
+  try {
+    const { pack, email } = req.body;
+    const packInfo = PACKS[pack];
+    if (!packInfo) return res.status(400).json({ error: 'Pack invalide' });
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      customer_email: email || undefined,
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          product_data: {
+            name: packInfo.name,
+            description: packInfo.description,
+            images: ['https://sonia-video-bd-site.onrender.com/logo.png'],
+          },
+          unit_amount: packInfo.price, // en centimes
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      success_url: FRONTEND_URL + '?payment=success&pack=' + pack + '&session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: FRONTEND_URL + '?payment=cancelled',
+      metadata: { pack, bds: packInfo.bds.toString() },
+    });
+
+    res.json({ url: session.url, sessionId: session.id });
+  } catch (err) {
+    console.error('Stripe error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Vérifier le statut d'un paiement
+app.get('/api/stripe/verify-payment/:sessionId', async (req, res) => {
+  try {
+    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
+    if (session.payment_status === 'paid') {
+      const pack = session.metadata.pack;
+      const bds = parseInt(session.metadata.bds);
+      res.json({ success: true, pack, bds, email: session.customer_email });
+    } else {
+      res.json({ success: false, status: session.payment_status });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Webhook Stripe (pour confirmer les paiements côté serveur)
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    if (STRIPE_WEBHOOK_SECRET) {
+      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } else {
+      event = JSON.parse(req.body);
+    }
+  } catch (err) {
+    return res.status(400).send('Webhook Error: ' + err.message);
+  }
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    console.log('Paiement confirmé:', session.id, 'Pack:', session.metadata.pack);
+  }
+  res.json({ received: true });
 });
 
 const PORT = process.env.PORT || 3000;
