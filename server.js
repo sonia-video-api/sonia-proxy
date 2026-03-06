@@ -296,11 +296,21 @@ Réponds en JSON avec cette structure exacte :
 
     let histoire;
     try {
-      histoire = JSON.parse(content);
+      // Nettoyer les backticks markdown
+      let cleaned = content.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+      histoire = JSON.parse(cleaned);
     } catch(e) {
       const match = content.match(/\{[\s\S]*\}/);
-      if (match) histoire = JSON.parse(match[0]);
-      else return res.status(500).json({ error: 'Réponse GPT invalide' });
+      if (!match) return res.status(500).json({ error: 'Réponse GPT invalide' });
+      try {
+        histoire = JSON.parse(match[0]);
+      } catch(e2) {
+        const fixedJson = match[0]
+          .replace(/[\x00-\x1F\x7F]/g, ' ')
+          .replace(/,\s*}/g, '}')
+          .replace(/,\s*]/g, ']');
+        histoire = JSON.parse(fixedJson);
+      }
     }
 
     return res.json({ histoire });
@@ -650,11 +660,26 @@ Réponds en JSON avec cette structure exacte :
     if (!gptRes.ok) throw new Error('Erreur GPT: ' + await gptRes.text());
     const gptData = await gptRes.json();
     let histoire;
+    const rawContent = gptData.choices[0].message.content;
     try {
-      histoire = JSON.parse(gptData.choices[0].message.content);
+      // Nettoyer le contenu : enlever les backticks markdown et espaces
+      let cleaned = rawContent.trim();
+      cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+      histoire = JSON.parse(cleaned);
     } catch(e) {
-      const jsonMatch = gptData.choices[0].message.content.match(/{[\s\S]+}/);
-      histoire = JSON.parse(jsonMatch[0]);
+      // Extraire le JSON avec regex plus robuste
+      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('JSON invalide dans la réponse GPT: ' + rawContent.substring(0, 200));
+      try {
+        histoire = JSON.parse(jsonMatch[0]);
+      } catch(e2) {
+        // Dernier recours : nettoyer les caractères problématiques
+        const fixedJson = jsonMatch[0]
+          .replace(/[\x00-\x1F\x7F]/g, ' ')  // Caractères de contrôle
+          .replace(/,\s*}/g, '}')             // Virgules finales
+          .replace(/,\s*]/g, ']');            // Virgules finales dans tableaux
+        histoire = JSON.parse(fixedJson);
+      }
     }
 
     return res.json({
