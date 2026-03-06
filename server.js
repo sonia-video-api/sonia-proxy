@@ -20,7 +20,7 @@ const REDIRECT_URI = PROXY_URL + '/auth/callback';
 const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
 
 // Health check
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v3 - Replicate DALL-E 3 + OpenAI TTS + FFmpeg.wasm' }));
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v4 - Replicate SDXL + OpenAI TTS + FFmpeg.wasm' }));
 
 // === HELPER: Nettoyer prompt pour éviter les erreurs de contenu sensible ===
 function nettoyerPrompt(prompt) {
@@ -39,15 +39,15 @@ function nettoyerPrompt(prompt) {
   return cleaned;
 }
 
-// === HELPER: Générer image via Replicate DALL-E 3 ===
+// === HELPER: Générer image via Replicate Stable Diffusion XL ===
 async function genererImageReplicate(prompt) {
   // Nettoyer le prompt avant envoi
   const promptNettoye = nettoyerPrompt(prompt);
-  // Ajouter un préfixe de style BD pour orienter la génération
-  const promptFinal = promptNettoye + ', style bande dessinée colorée, illustration professionnelle, adapté à tous publics';
+  // Ajouter un suffixe de style BD
+  const promptFinal = promptNettoye + ', comic book illustration style, colorful vibrant art, professional illustration, safe for all ages';
 
-  // Lancer la prédiction
-  const startRes = await fetch('https://api.replicate.com/v1/models/openai/dall-e-3/predictions', {
+  // Utiliser Stable Diffusion XL - pas de restriction E005
+  const startRes = await fetch('https://api.replicate.com/v1/models/stability-ai/sdxl/predictions', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + REPLICATE_TOKEN,
@@ -57,19 +57,22 @@ async function genererImageReplicate(prompt) {
     body: JSON.stringify({
       input: {
         prompt: promptFinal,
-        size: '1024x1792',
-        quality: 'standard',
-        style: 'vivid'
+        negative_prompt: 'nsfw, nude, violence, gore, ugly, blurry, bad quality, watermark',
+        width: 768,
+        height: 1344,
+        num_outputs: 1,
+        scheduler: 'K_EULER',
+        num_inference_steps: 30,
+        guidance_scale: 7.5,
+        refine: 'expert_ensemble_refiner',
+        high_noise_frac: 0.8
       }
     })
   });
 
   if (!startRes.ok) {
     const err = await startRes.text();
-    if (err.includes('E005') || err.includes('sensitive') || err.includes('flagged')) {
-      throw new Error('CONTENU_SENSIBLE');
-    }
-    throw new Error('Erreur Replicate DALL-E 3: ' + err);
+    throw new Error('Erreur Replicate SDXL: ' + err);
   }
 
   const prediction = await startRes.json();
@@ -93,11 +96,7 @@ async function genererImageReplicate(prompt) {
     }
     if (pollData.status === 'failed' || pollData.status === 'canceled') {
       const errMsg = pollData.error || pollData.status || '';
-      // Erreur E005 = contenu sensible → réessayer avec prompt générique
-      if (errMsg.includes('E005') || errMsg.includes('sensitive') || errMsg.includes('flagged')) {
-        throw new Error('CONTENU_SENSIBLE');
-      }
-      throw new Error('Replicate échec: ' + errMsg);
+      throw new Error('Replicate SDXL échec: ' + errMsg);
     }
     attempts++;
   }
