@@ -222,7 +222,7 @@ Réponds en JSON avec cette structure exacte :
   "couverture": {
     "description_image": "Description détaillée pour générer l'image de couverture (en anglais, style comic book coloré, vertical 9:16)",
     "texte_couverture": "Phrase d'accroche sur la couverture",
-    "narration_voix": "Texte de narration pour la voix off de la couverture (2 phrases en français)"
+    "narration_voix": "Résumé court et accrocheur de toute l'histoire en 2-3 phrases maximum (environ 10 secondes de lecture à voix haute). Doit donner envie de lire la suite."
   },
   "pages": [
     {
@@ -231,7 +231,7 @@ Réponds en JSON avec cette structure exacte :
       "description_image": "Description détaillée pour générer l'image (en anglais, style comic book coloré, vertical 9:16, avec personnages et décor)",
       "narration": "Texte de narration de la page (2-3 phrases en français)",
       "dialogue": "Dialogue principal de la page (en français)",
-      "narration_voix": "Texte complet pour la voix off de cette page (3-4 phrases en français)"
+      "narration_voix": "Narration vivante et détaillée de cette page (4-5 phrases en français, environ 15 secondes de lecture à voix haute). Décrit l'action, les émotions des personnages et les dialogues clés."
     },
     {
       "numero": 2,
@@ -239,7 +239,7 @@ Réponds en JSON avec cette structure exacte :
       "description_image": "Description image en anglais, style comic book coloré, vertical 9:16",
       "narration": "Narration en français",
       "dialogue": "Dialogue en français",
-      "narration_voix": "Texte voix off en français"
+      "narration_voix": "Narration vivante et détaillée de cette page (4-5 phrases en français, environ 15 secondes de lecture à voix haute). Décrit l'action, les émotions et les dialogues."
     },
     {
       "numero": 3,
@@ -247,7 +247,7 @@ Réponds en JSON avec cette structure exacte :
       "description_image": "Description image en anglais, style comic book coloré, vertical 9:16",
       "narration": "Narration en français",
       "dialogue": "Dialogue en français",
-      "narration_voix": "Texte voix off en français"
+      "narration_voix": "Narration vivante et détaillée de cette page (4-5 phrases en français, environ 15 secondes de lecture à voix haute). Décrit l'action, les émotions et les dialogues."
     },
     {
       "numero": 4,
@@ -255,7 +255,7 @@ Réponds en JSON avec cette structure exacte :
       "description_image": "Description image en anglais, style comic book coloré, vertical 9:16",
       "narration": "Narration en français",
       "dialogue": "Dialogue en français",
-      "narration_voix": "Texte voix off en français"
+      "narration_voix": "Conclusion émouvante de l'histoire (4-5 phrases en français, environ 15 secondes de lecture à voix haute). Résout l'intrigue et laisse une impression mémorable."
     }
   ]
 }`
@@ -420,7 +420,10 @@ app.post('/api/generer-video', async (req, res) => {
       // Générer la voix off TTS
       let audioBase64 = null;
       const voixText = page.narration_voix || page.narration || page.dialogue || '';
-      if (voixText.trim()) {
+      // Couverture : ~10s = ~150 caractères | Pages : ~15s = ~250 caractères
+      const maxChars = i === 0 ? 200 : 350;
+      const voixTronque = voixText.substring(0, maxChars);
+      if (voixTronque.trim()) {
         const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
           method: 'POST',
           headers: {
@@ -429,7 +432,7 @@ app.post('/api/generer-video', async (req, res) => {
           },
           body: JSON.stringify({
             model: 'tts-1',
-            input: voixText.substring(0, 500), // Limiter la longueur
+            input: voixTronque,
             voice: voix,
             response_format: 'mp3'
           })
