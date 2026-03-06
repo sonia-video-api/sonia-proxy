@@ -162,12 +162,96 @@ async function genererImageReplicate(prompt) {
   throw new Error('Timeout Replicate après 3 minutes');
 }
 
+// === HELPER: Recherche d'informations sur Internet (DuckDuckGo) ===
+async function rechercherInternet(query) {
+  try {
+    // Utiliser DuckDuckGo Instant Answer API (gratuite, sans clé)
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'SoniaVideoBD/1.0' } });
+    const data = await res.json();
+    
+    let infos = [];
+    
+    // Résultat principal
+    if (data.AbstractText) infos.push(data.AbstractText);
+    
+    // Topics liés
+    if (data.RelatedTopics && data.RelatedTopics.length > 0) {
+      data.RelatedTopics.slice(0, 5).forEach(t => {
+        if (t.Text) infos.push(t.Text);
+      });
+    }
+    
+    // Résultat de réponse directe
+    if (data.Answer) infos.push(data.Answer);
+    
+    return infos.join(' | ').substring(0, 1000);
+  } catch(e) {
+    return '';
+  }
+}
+
+// === HELPER: Recherche actualités récentes (NewsAPI gratuite via RSS) ===
+async function rechercherActualites(query) {
+  try {
+    // Utiliser le flux RSS de Google News (gratuit)
+    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=fr&gl=FR&ceid=FR:fr`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'SoniaVideoBD/1.0' } });
+    const xml = await res.text();
+    
+    // Extraire les titres des articles
+    const titres = [];
+    const matches = xml.matchAll(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/g);
+    let count = 0;
+    for (const m of matches) {
+      if (count > 0 && count <= 5) titres.push(m[1]); // Skip le premier (titre du flux)
+      count++;
+    }
+    
+    return titres.join(' | ').substring(0, 800);
+  } catch(e) {
+    return '';
+  }
+}
+
+// === ENDPOINT: Recherche sur Internet ===
+app.post('/api/recherche-web', async (req, res) => {
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ error: 'Query requise' });
+  
+  try {
+    const [infos, actualites] = await Promise.all([
+      rechercherInternet(query),
+      rechercherActualites(query)
+    ]);
+    
+    return res.json({
+      infos: infos || '',
+      actualites: actualites || '',
+      source: 'DuckDuckGo + Google News'
+    });
+  } catch(err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // === GÉNÉRATION HISTOIRE BD PAR IA (GPT) ===
 app.post('/api/histoire', async (req, res) => {
-  const { phrase } = req.body;
+  const { phrase, rechercherWeb = false } = req.body;
   if (!phrase) return res.status(400).json({ error: 'Phrase requise' });
 
   try {
+    // Recherche d'informations sur Internet si demandée
+    let contextWeb = '';
+    if (rechercherWeb) {
+      const [infosWeb, actualitesWeb] = await Promise.all([
+        rechercherInternet(phrase),
+        rechercherActualites(phrase)
+      ]);
+      if (infosWeb) contextWeb += `\n\nInformations trouvées sur Internet : ${infosWeb}`;
+      if (actualitesWeb) contextWeb += `\n\nActualités récentes : ${actualitesWeb}`;
+    }
+
     const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -181,12 +265,12 @@ app.post('/api/histoire', async (req, res) => {
           {
             role: 'system',
             content: `Tu es un scénariste de bandes dessinées créatif et talentueux. 
-Tu crées des histoires BD courtes, vivantes et émouvantes en français.
+Tu crées des histoires BD courtes, vivantes et émouvantes en français.${contextWeb ? '\nTu utilises les informations réelles trouvées sur Internet pour enrichir l\'histoire et la rendre actuelle et réaliste.' : ''}
 Réponds UNIQUEMENT en JSON valide, sans markdown, sans explication.`
           },
           {
             role: 'user',
-            content: `Crée une histoire BD complète basée sur cette idée : "${phrase}"
+            content: `Crée une histoire BD complète basée sur cette idée : "${phrase}"${contextWeb}
 
 Réponds en JSON avec cette structure exacte :
 {
