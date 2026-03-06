@@ -55,12 +55,19 @@ async function genererImagePollinations(prompt) {
 }
 
 // === HELPER: Générer image via DALL-E 3 (haute qualité, style BD professionnel, retry auto) ===
-async function genererImageReplicate(prompt, isHD = false) {
+async function genererImageReplicate(prompt, isHD = false, isPage = false) {
   const promptNettoye = nettoyerPrompt(prompt);
   
-  // Prompt optimisé pour style comic book américain moderne (Marvel/DC/Webtoon)
-  const prefix = 'Modern American comic book cover illustration, single scene portrait format. ';
-  const suffix = ' Art style: professional comic book illustration, semi-realistic cartoon style, bold clean ink outlines, dramatic cinematic lighting, deep rich colors with strong contrast, expressive character faces with detailed eyes, dynamic composition, dark atmospheric background with city lights or dramatic sky, vibrant saturated colors, bold white text with dark outline for title at top, subtitle text at bottom in yellow or white, 9:16 vertical portrait format, Marvel Comics / DC Comics quality, professional graphic novel cover art. NO photorealism, stylized illustration only.';
+  let prefix, suffix;
+  if (isPage) {
+    // Prompt pour page BD multi-panneaux style anime/manga moderne
+    prefix = 'Comic book page layout with 3 vertical panels stacked, manga/anime art style, warm cinematic lighting. ';
+    suffix = ' Art style: semi-realistic anime/manga style illustration, 3 panels separated by thin black borders, each panel shows a different moment of the scene, expressive cartoon characters with detailed eyes and emotions, warm indoor lighting (lamp, phone glow), speech bubbles with readable French text inside, bold clean ink outlines, rich warm colors (amber, dark blue, golden), detailed backgrounds (bedroom, phone screen details), 9:16 vertical format, professional webtoon/manhwa quality. Each panel has white speech bubbles with black text. NO photorealism, stylized illustration only.';
+  } else {
+    // Prompt pour couverture style comic book américain moderne
+    prefix = 'Modern American comic book cover illustration, single scene portrait format. ';
+    suffix = ' Art style: professional comic book illustration, semi-realistic cartoon style, bold clean ink outlines, dramatic cinematic lighting, deep rich colors with strong contrast, expressive character faces with detailed eyes, dynamic composition, dark atmospheric background with city lights or dramatic sky, vibrant saturated colors, bold white text with dark outline for title at top, subtitle text at bottom in yellow or white, 9:16 vertical portrait format, Marvel Comics / DC Comics quality, professional graphic novel cover art. NO photorealism, stylized illustration only.';
+  }
   const promptFinal = (prefix + promptNettoye + suffix).substring(0, 4000);
 
   const MAX_RETRIES = 3;
@@ -405,16 +412,18 @@ app.post('/api/generer-video', async (req, res) => {
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
 
-      // Générer l'image via DALL-E 3 style BD franco-belge
+      // Générer l'image - couverture ou page BD
+      const isPageBD = i > 0;
+      const dialogues = page.dialogues ? page.dialogues.map(d => `"${d.texte}"`).join(', ') : '';
       const imgPrompt = i === 0
-        ? `Modern comic book cover, title "${histoire.titre}", dramatic cinematic lighting, bold ink outlines, vibrant saturated colors, expressive character, dark atmospheric background, Marvel DC style, 9:16 vertical: ${page.description_image}`
-        : `Modern comic book page ${i}, dramatic cinematic lighting, bold ink outlines, vibrant saturated colors, expressive characters, Marvel DC style, 9:16 vertical: ${page.description_image}`;
+        ? `Comic book cover, title "${histoire.titre}", dramatic cinematic lighting, bold ink outlines, vibrant saturated colors, expressive character, dark atmospheric background, Marvel DC style, 9:16 vertical: ${page.description_image}`
+        : `3-panel comic page, scene: ${page.description_image}${dialogues ? `, speech bubbles containing: ${dialogues}` : ''}, warm indoor lighting, expressive characters, anime/manga style`;
 
-      const fullPrompt = `Modern American comic book illustration, Marvel DC style, semi-realistic cartoon, bold ink outlines, dramatic cinematic lighting, vibrant saturated colors, expressive characters, 9:16 vertical portrait format: ${imgPrompt}`;
+      const fullPrompt = imgPrompt;
 
       let imageUrl;
       try {
-        imageUrl = await genererImageReplicate(fullPrompt);
+        imageUrl = await genererImageReplicate(fullPrompt, false, isPageBD);
       } catch (imgErr) {
         console.warn('DALL-E 3 échoué, fallback Pollinations.ai:', imgErr.message);
         // Fallback vers Pollinations.ai (gratuit)
