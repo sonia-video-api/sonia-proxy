@@ -39,6 +39,16 @@ function nettoyerPrompt(prompt) {
   return cleaned;
 }
 
+// === HELPER: Générer image via Pollinations.ai (gratuit, fallback) ===
+async function genererImagePollinations(prompt) {
+  const promptNettoye = nettoyerPrompt(prompt);
+  const encodedPrompt = encodeURIComponent(promptNettoye.substring(0, 500));
+  const seed = Math.floor(Math.random() * 999999);
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=1344&model=flux&seed=${seed}&nologo=true`;
+  // Pollinations retourne directement l'image
+  return url;
+}
+
 // === HELPER: Générer image via DALL-E 3 (haute qualité, style BD professionnel, retry auto) ===
 async function genererImageReplicate(prompt, isHD = false) {
   const promptNettoye = nettoyerPrompt(prompt);
@@ -401,14 +411,13 @@ app.post('/api/generer-video', async (req, res) => {
       try {
         imageUrl = await genererImageReplicate(fullPrompt);
       } catch (imgErr) {
-        if (imgErr.message === 'CONTENU_SENSIBLE') {
-          // Fallback avec prompt générique
-          const fallbackPrompt = i === 0
-            ? `Comic book cover, colorful BD style, vertical 9:16, two friendly characters on an adventure, vibrant colors, professional comic art`
-            : `Comic book page ${i}, BD illustration style, colorful, friendly characters in action, vibrant colors`;
-          imageUrl = await genererImageReplicate(fallbackPrompt);
-        } else {
-          throw imgErr;
+        console.warn('DALL-E 3 échoué, fallback Pollinations.ai:', imgErr.message);
+        // Fallback vers Pollinations.ai (gratuit)
+        try {
+          imageUrl = await genererImagePollinations(fullPrompt);
+        } catch (polErr) {
+          // Fallback ultime : image placeholder
+          imageUrl = `https://via.placeholder.com/768x1344/1a0a2e/ffd700?text=Page+${i}`;
         }
       }
 
@@ -444,12 +453,16 @@ app.post('/api/generer-video', async (req, res) => {
         }
       }
 
+      // Estimer la durée en secondes (basé sur longueur du texte)
+      const dureeEstimee = i === 0 ? 10 : 15; // Couverture 10s, pages 15s
+
       segments.push({
         index: i,
         titre: page.titre_page || (i === 0 ? 'Couverture' : `Page ${i}`),
         image: imageBase64,
         audio: audioBase64,
-        texte: voixText
+        texte: voixText,
+        duree: dureeEstimee
       });
     }
 
