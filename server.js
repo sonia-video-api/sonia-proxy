@@ -20,7 +20,7 @@ const REDIRECT_URI = PROXY_URL + '/auth/callback';
 const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
 
 // Health check
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v5 - DALL-E 2 (rapide) + OpenAI TTS + Recherche Web' }));
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v6 - DALL-E 3 HD (qualité BD pro) + OpenAI TTS + Recherche Web' }));
 
 // === HELPER: Nettoyer prompt pour éviter les erreurs de contenu sensible ===
 function nettoyerPrompt(prompt) {
@@ -39,13 +39,14 @@ function nettoyerPrompt(prompt) {
   return cleaned;
 }
 
-// === HELPER: Générer image via DALL-E 2 (rapide, ~5s, 0.02$/image) ===
-async function genererImageReplicate(prompt) {
+// === HELPER: Générer image via DALL-E 3 (haute qualité, style BD professionnel) ===
+async function genererImageReplicate(prompt, isHD = false) {
   // Nettoyer le prompt avant envoi
   const promptNettoye = nettoyerPrompt(prompt);
-  // Ajouter un suffixe de style BD (max 1000 chars pour DALL-E 2)
-  const suffix = ', comic book BD illustration style, colorful vibrant art, professional comic art';
-  const promptFinal = (promptNettoye + suffix).substring(0, 1000);
+  
+  // Prompt optimisé pour style BD professionnel
+  const suffix = '. Style bande dessinée professionnelle française, traits nets et expressifs, couleurs vives et contrastées, cases BD avec bulles de dialogue, art de type Tintin ou Astérix, personnages expressifs, décors détaillés, encrage propre, colorisation professionnelle.';
+  const promptFinal = (promptNettoye + suffix).substring(0, 4000);
 
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
@@ -54,23 +55,26 @@ async function genererImageReplicate(prompt) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'dall-e-2',
+      model: 'dall-e-3',
       prompt: promptFinal,
       n: 1,
-      size: '512x512'
+      size: '1024x1792',
+      quality: isHD ? 'hd' : 'standard',
+      style: 'vivid'
     })
   });
 
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error('Erreur DALL-E 2: ' + errText);
+    const errData = await res.json().catch(() => ({}));
+    const errMsg = errData.error ? errData.error.message : 'Erreur inconnue';
+    throw new Error('Erreur DALL-E 3: ' + errMsg);
   }
 
   const data = await res.json();
   if (data.data && data.data[0] && data.data[0].url) {
     return data.data[0].url;
   }
-  throw new Error('DALL-E 2: pas d\'image dans la réponse');
+  throw new Error('DALL-E 3: pas d\'image dans la réponse');
 }
 
 // === HELPER: Recherche d'informations sur Internet (DuckDuckGo) ===
