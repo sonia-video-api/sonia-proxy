@@ -39,42 +39,66 @@ function nettoyerPrompt(prompt) {
   return cleaned;
 }
 
-// === HELPER: Générer image via DALL-E 3 (haute qualité, style BD professionnel) ===
+// === HELPER: Générer image via DALL-E 3 (haute qualité, style BD professionnel, retry auto) ===
 async function genererImageReplicate(prompt, isHD = false) {
-  // Nettoyer le prompt avant envoi
   const promptNettoye = nettoyerPrompt(prompt);
-  
-  // Prompt optimisé pour style BD professionnel
   const suffix = '. Style bande dessinée professionnelle française, traits nets et expressifs, couleurs vives et contrastées, cases BD avec bulles de dialogue, art de type Tintin ou Astérix, personnages expressifs, décors détaillés, encrage propre, colorisation professionnelle.';
   const promptFinal = (promptNettoye + suffix).substring(0, 4000);
 
-  const res = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + OPENAI_KEY,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'dall-e-3',
-      prompt: promptFinal,
-      n: 1,
-      size: '1024x1792',
-      quality: isHD ? 'hd' : 'standard',
-      style: 'vivid'
-    })
-  });
+  const MAX_RETRIES = 3;
+  let lastError = null;
 
-  if (!res.ok) {
-    const errData = await res.json().catch(() => ({}));
-    const errMsg = errData.error ? errData.error.message : 'Erreur inconnue';
-    throw new Error('Erreur DALL-E 3: ' + errMsg);
-  }
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + OPENAI_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt: promptFinal,
+          n: 1,
+          size: '1024x1792',
+          quality: isHD ? 'hd' : 'standard',
+          style: 'vivid'
+        })
+      });
 
-  const data = await res.json();
-  if (data.data && data.data[0] && data.data[0].url) {
-    return data.data[0].url;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData.error ? errData.error.message : 'Erreur inconnue';
+        const status = res.status;
+        // Retry sur erreurs serveur (500, 502, 503) ou rate limit (429)
+        if ((status >= 500 || status === 429) && attempt < MAX_RETRIES) {
+          const delay = attempt * 5000; // 5s, 10s
+          console.log(`DALL-E 3 erreur ${status} (tentative ${attempt}/${MAX_RETRIES}), retry dans ${delay/1000}s...`);
+          await new Promise(r => setTimeout(r, delay));
+          lastError = new Error('Erreur DALL-E 3: ' + errMsg);
+          continue;
+        }
+        throw new Error('Erreur DALL-E 3: ' + errMsg);
+      }
+
+      const data = await res.json();
+      if (data.data && data.data[0] && data.data[0].url) {
+        return data.data[0].url;
+      }
+      throw new Error('DALL-E 3: pas d\'image dans la réponse');
+
+    } catch (err) {
+      if (attempt < MAX_RETRIES && err.message && !err.message.includes('content_policy')) {
+        const delay = attempt * 5000;
+        console.log(`DALL-E 3 exception (tentative ${attempt}/${MAX_RETRIES}), retry dans ${delay/1000}s: ${err.message}`);
+        await new Promise(r => setTimeout(r, delay));
+        lastError = err;
+        continue;
+      }
+      throw err;
+    }
   }
-  throw new Error('DALL-E 3: pas d\'image dans la réponse');
+  throw lastError || new Error('DALL-E 3: échec après 3 tentatives');
 }
 
 // === HELPER: Recherche d'informations sur Internet (DuckDuckGo) ===
