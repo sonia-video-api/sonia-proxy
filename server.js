@@ -875,3 +875,4 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Sonia Proxy v2 running on port ' + PORT));
+// force redeploy Fri Mar  6 16:14:44 EST 2026
