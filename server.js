@@ -47,7 +47,8 @@ async function genererImageReplicate(prompt) {
   const promptFinal = promptNettoye + ', comic book illustration style, colorful vibrant art, professional illustration, safe for all ages';
 
   // Utiliser Stable Diffusion XL - pas de restriction E005
-  const startRes = await fetch('https://api.replicate.com/v1/models/stability-ai/sdxl/predictions', {
+  // Version SDXL: stability-ai/sdxl@7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc
+  const startRes = await fetch('https://api.replicate.com/v1/predictions', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + REPLICATE_TOKEN,
@@ -55,6 +56,7 @@ async function genererImageReplicate(prompt) {
       'Prefer': 'wait'
     },
     body: JSON.stringify({
+      version: '7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc',
       input: {
         prompt: promptFinal,
         negative_prompt: 'nsfw, nude, violence, gore, ugly, blurry, bad quality, watermark',
