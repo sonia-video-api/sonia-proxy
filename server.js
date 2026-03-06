@@ -20,7 +20,7 @@ const REDIRECT_URI = PROXY_URL + '/auth/callback';
 const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || 'b6747d04';
 
 // Health check
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v4 - Replicate SDXL + OpenAI TTS + FFmpeg.wasm' }));
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'Sonia Video BD Proxy v5 - DALL-E 2 (rapide) + OpenAI TTS + Recherche Web' }));
 
 // === HELPER: Nettoyer prompt pour éviter les erreurs de contenu sensible ===
 function nettoyerPrompt(prompt) {
@@ -39,127 +39,38 @@ function nettoyerPrompt(prompt) {
   return cleaned;
 }
 
-// === HELPER: Générer image via Replicate Stable Diffusion XL ===
+// === HELPER: Générer image via DALL-E 2 (rapide, ~5s, 0.02$/image) ===
 async function genererImageReplicate(prompt) {
   // Nettoyer le prompt avant envoi
   const promptNettoye = nettoyerPrompt(prompt);
-  // Ajouter un suffixe de style BD
-  const promptFinal = promptNettoye + ', comic book illustration style, colorful vibrant art, professional illustration, safe for all ages';
+  // Ajouter un suffixe de style BD (max 1000 chars pour DALL-E 2)
+  const suffix = ', comic book BD illustration style, colorful vibrant art, professional comic art';
+  const promptFinal = (promptNettoye + suffix).substring(0, 1000);
 
-  // Utiliser Stable Diffusion XL - pas de restriction E005
-  // Version SDXL: stability-ai/sdxl@7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc
-  const startRes = await fetch('https://api.replicate.com/v1/predictions', {
+  const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
     headers: {
-      'Authorization': 'Bearer ' + REPLICATE_TOKEN,
-      'Content-Type': 'application/json',
-      'Prefer': 'wait'
+      'Authorization': 'Bearer ' + OPENAI_KEY,
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      version: '7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc',
-      input: {
-        prompt: promptFinal,
-        negative_prompt: 'nsfw, nude, violence, gore, ugly, blurry, bad quality, watermark',
-        width: 768,
-        height: 1344,
-        num_outputs: 1,
-        scheduler: 'K_EULER',
-        num_inference_steps: 30,
-        guidance_scale: 7.5,
-        refine: 'expert_ensemble_refiner',
-        high_noise_frac: 0.8
-      }
+      model: 'dall-e-2',
+      prompt: promptFinal,
+      n: 1,
+      size: '512x512'
     })
   });
 
-  // Gestion du rate limit 429 - retry automatique
-  if (!startRes.ok) {
-    const errText = await startRes.text();
-    let errData = {};
-    try { errData = JSON.parse(errText); } catch(e) {}
-    
-    if (startRes.status === 429) {
-      // Rate limit - attendre et réessayer jusqu'à 3 fois
-      const retryAfter = (errData.retry_after || 10) * 1000 + 2000; // +2s de marge
-      for (let retry = 0; retry < 3; retry++) {
-        await new Promise(r => setTimeout(r, retryAfter));
-        const retryRes = await fetch('https://api.replicate.com/v1/predictions', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + REPLICATE_TOKEN,
-            'Content-Type': 'application/json',
-            'Prefer': 'wait'
-          },
-          body: JSON.stringify({
-            version: '7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc',
-            input: {
-              prompt: promptFinal,
-              negative_prompt: 'nsfw, nude, violence, gore, ugly, blurry, bad quality, watermark',
-              width: 768,
-              height: 1344,
-              num_outputs: 1,
-              scheduler: 'K_EULER',
-              num_inference_steps: 30,
-              guidance_scale: 7.5,
-              refine: 'expert_ensemble_refiner',
-              high_noise_frac: 0.8
-            }
-          })
-        });
-        if (retryRes.ok) {
-          const retryData = await retryRes.json();
-          if (retryData.status === 'succeeded' && retryData.output && retryData.output[0]) {
-            return retryData.output[0];
-          }
-          // Continuer avec le polling normal
-          const predId2 = retryData.id;
-          let att2 = 0;
-          while (att2 < 60) {
-            await new Promise(r => setTimeout(r, 3000));
-            const p2 = await fetch(`https://api.replicate.com/v1/predictions/${predId2}`, {
-              headers: { 'Authorization': 'Bearer ' + REPLICATE_TOKEN }
-            });
-            const pd2 = await p2.json();
-            if (pd2.status === 'succeeded' && pd2.output && pd2.output[0]) return pd2.output[0];
-            if (pd2.status === 'failed' || pd2.status === 'canceled') throw new Error('Replicate SDXL échec: ' + (pd2.error || pd2.status));
-            att2++;
-          }
-          throw new Error('Timeout Replicate après 3 minutes');
-        }
-        const retryErr = await retryRes.text();
-        if (retryRes.status !== 429) throw new Error('Erreur Replicate SDXL: ' + retryErr);
-      }
-      throw new Error('Replicate rate limit dépassé - veuillez réessayer dans quelques secondes');
-    }
-    throw new Error('Erreur Replicate SDXL: ' + errText);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error('Erreur DALL-E 2: ' + errText);
   }
 
-  const prediction = await startRes.json();
-
-  // Si déjà terminé (Prefer: wait)
-  if (prediction.status === 'succeeded' && prediction.output && prediction.output[0]) {
-    return prediction.output[0];
+  const data = await res.json();
+  if (data.data && data.data[0] && data.data[0].url) {
+    return data.data[0].url;
   }
-
-  // Sinon, polling jusqu'à completion
-  const predId = prediction.id;
-  let attempts = 0;
-  while (attempts < 60) {
-    await new Promise(r => setTimeout(r, 3000));
-    const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
-      headers: { 'Authorization': 'Bearer ' + REPLICATE_TOKEN }
-    });
-    const pollData = await pollRes.json();
-    if (pollData.status === 'succeeded' && pollData.output && pollData.output[0]) {
-      return pollData.output[0];
-    }
-    if (pollData.status === 'failed' || pollData.status === 'canceled') {
-      const errMsg = pollData.error || pollData.status || '';
-      throw new Error('Replicate SDXL échec: ' + errMsg);
-    }
-    attempts++;
-  }
-  throw new Error('Timeout Replicate après 3 minutes');
+  throw new Error('DALL-E 2: pas d\'image dans la réponse');
 }
 
 // === HELPER: Recherche d'informations sur Internet (DuckDuckGo) ===
