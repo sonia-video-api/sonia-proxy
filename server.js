@@ -254,7 +254,7 @@ app.post('/api/generate/standard', async (req, res) => {
 });
 
 app.post('/api/generer-video', async (req, res) => {
-  const { histoire, voix = 'nova' } = req.body;
+  const { histoire, voix = 'nova', musique = 'none' } = req.body;
   if (!histoire) return res.status(400).json({ error: 'Histoire requise' });
 
   try {
@@ -315,7 +315,7 @@ app.post('/api/generer-video', async (req, res) => {
       });
     }
 
-    return res.json({ segments, titre: histoire.titre });
+    return res.json({ segments, titre: histoire.titre, musique: musique });
 
   } catch (err) {
     return res.status(500).json({ error: err.message });
