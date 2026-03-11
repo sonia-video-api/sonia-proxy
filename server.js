@@ -121,7 +121,8 @@ async function genererImageDalle(prompt, quality = 'standard') {
 // === HELPER: Générer image avec style TikTok Anime (Pollinations par défaut) ===
 async function genererImageAvecFallback(prompt, style = 'standard') {
   try {
-    const animePrompt = `Masterpiece, high-end digital illustration, Modern TikTok Anime style, vibrant colors, clean lines, expressive characters, cinematic lighting, 9:16 vertical format, consistent character design, detailed background: ${prompt}`;
+    // Prompt ultra-détaillé pour Flux.1 avec cohérence stricte
+    const animePrompt = `MASTERPIECE, 8K ultra-detailed, professional comic book illustration, Flux.1 quality. Style: Modern TikTok Anime, vibrant saturated colors, clean ink lines, expressive detailed faces, cinematic studio lighting, perfect anatomy, consistent character design throughout. Format: 9:16 vertical. Quality: ultra-sharp, high-contrast, professional comic art. ${prompt}. CRITICAL: Maintain exact same character appearance, clothing, and features across all variations.`;
     return await genererImagePollinations(animePrompt);
   } catch (err) {
     console.warn('Pollinations échoué, fallback DALL-E 3:', err.message);
@@ -351,3 +352,102 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Sonia Proxy v3 running on port ${PORT}`);
 });
+
+// === ENDPOINT: Générer BD à partir d'un profil social (4 pages x 4 cases + couverture) ===
+app.post('/api/bd-social', async (req, res) => {
+  try {
+    const { username, platform, pages = 4, voix = 'nova', musique = 'epic' } = req.body;
+    
+    if (!username || !platform) {
+      return res.status(400).json({ error: 'username et platform requis' });
+    }
+
+    // Étape 1 : Analyser le profil social et créer un scénario
+    const promptAnalyse = `Tu es un scénariste créatif. Analyse le compte ${platform} "@${username}" et crée une histoire BD captivante en ${pages} pages (4 cases par page) + 1 couverture.
+
+STRUCTURE REQUISE:
+- COUVERTURE: Titre accrocheur, image représentative du compte
+- PAGE 1 (4 cases): Introduction du personnage/thème
+- PAGE 2 (4 cases): Développement de l'action
+- PAGE 3 (4 cases): Climax ou rebondissement
+- PAGE 4 (4 cases): Conclusion/moral
+
+Pour CHAQUE case, fournis:
+- titre_case: Titre court
+- description_image: Description ultra-détaillée (couleurs, personnages, décor, ambiance)
+- narration: Texte narratif (max 50 mots)
+- dialogue: Dialogue des personnages (max 30 mots)
+
+Réponds UNIQUEMENT en JSON valide, sans markdown.`;
+
+    const histRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + OPENAI_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4-turbo',
+        messages: [{ role: 'user', content: promptAnalyse }],
+        temperature: 0.8,
+        max_tokens: 4000
+      })
+    });
+
+    const histData = await histRes.json();
+    if (!histRes.ok) throw new Error(histData.error?.message || 'Erreur génération histoire');
+
+    let histoire = {};
+    try {
+      const content = histData.choices[0].message.content;
+      histoire = JSON.parse(content);
+    } catch (e) {
+      throw new Error('Réponse IA invalide: ' + e.message);
+    }
+
+    // Étape 2 : Générer les images pour chaque case
+    const images = [];
+    const totalCases = 1 + (pages * 4); // 1 couverture + pages * 4 cases
+
+    // Couverture
+    if (histoire.couverture) {
+      const coverPrompt = `MASTERPIECE, 8K ultra-detailed, professional comic book cover. ${histoire.couverture.description_image}. Style: Modern TikTok Anime, vibrant colors, dynamic composition, professional comic art.`;
+      const coverUrl = await genererImageAvecFallback(coverPrompt);
+      images.push({ type: 'couverture', url: coverUrl, titre: histoire.couverture.titre_case });
+    }
+
+    // Pages et cases
+    if (histoire.pages && Array.isArray(histoire.pages)) {
+      for (let p = 0; p < histoire.pages.length; p++) {
+        const page = histoire.pages[p];
+        if (page.cases && Array.isArray(page.cases)) {
+          for (let c = 0; c < page.cases.length; c++) {
+            const caseData = page.cases[c];
+            const casePrompt = `Comic book panel, BD illustration. ${caseData.description_image}. Style: Modern TikTok Anime, vibrant colors, clean lines, professional comic art. Panel ${c + 1} of page ${p + 1}.`;
+            const caseUrl = await genererImageAvecFallback(casePrompt);
+            images.push({
+              type: 'case',
+              page: p + 1,
+              case: c + 1,
+              url: caseUrl,
+              titre: caseData.titre_case,
+              narration: caseData.narration,
+              dialogue: caseData.dialogue
+            });
+          }
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      titre: histoire.titre || `L'histoire de @${username}`,
+      images: images,
+      totalCases: images.length,
+      histoire: histoire
+    });
+
+  } catch (err) {
+    console.error('Erreur /api/bd-social:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// === ENDPOINT: Démarrer le serveur ===
