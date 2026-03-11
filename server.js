@@ -121,8 +121,8 @@ async function genererImageDalle(prompt, quality = 'standard') {
 // === HELPER: Générer image avec style TikTok Anime (Pollinations par défaut) ===
 async function genererImageAvecFallback(prompt, style = 'standard') {
   try {
-    // Prompt ultra-détaillé pour Flux.1 avec cohérence stricte
-    const animePrompt = `MASTERPIECE, 8K ultra-detailed, professional comic book illustration, Flux.1 quality. Style: Modern TikTok Anime, vibrant saturated colors, clean ink lines, expressive detailed faces, cinematic studio lighting, perfect anatomy, consistent character design throughout. Format: 9:16 vertical. Quality: ultra-sharp, high-contrast, professional comic art. ${prompt}. CRITICAL: Maintain exact same character appearance, clothing, and features across all variations.`;
+    // Prompt ULTRA-MASTERPIECE avec instructions de rendu professionnel
+    const animePrompt = `MASTERPIECE, ULTRA-DETAILED, 8K RESOLUTION, PROFESSIONAL QUALITY. Comic book illustration in TikTok Anime style. CRITICAL RENDERING INSTRUCTIONS: 1) Cinematic studio lighting with volumetric shadows and highlights 2) Hyper-detailed character faces with expressive eyes and perfect proportions 3) Vibrant saturated colors with perfect contrast 4) Clean, precise ink lines with no blur or artifacts 5) Consistent character design - EXACT same appearance, clothing, accessories, and features 6) Professional comic book composition 7) High-quality texture details 8) Format: 9:16 vertical aspect ratio 9) Zero defects, zero artifacts, museum-quality rendering. STORY: ${prompt}. STYLE: Modern anime meets European comic book art, Flux.1 ultra-quality, award-winning illustration.`;
     return await genererImagePollinations(animePrompt);
   } catch (err) {
     console.warn('Pollinations échoué, fallback DALL-E 3:', err.message);
