@@ -168,6 +168,79 @@ app.post('/api/generer-bd', async (req, res) => {
   }
 });
 
+// === ENDPOINT: Générer BD à partir d'une image téléchargée ===
+app.post('/api/generer-bd-image', async (req, res) => {
+  const { image } = req.body;
+  if (!image) return res.status(400).json({ error: 'Image requise' });
+
+  try {
+    // Analyser l'image avec Vision API d'OpenAI
+    const visionRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + OPENAI_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Analyse cette image et décris en détail: les personnages (apparence, expressions), le décor, l\'ambiance, les actions, les couleurs, le style. Sois très spécifique pour que je puisse générer une BD cohérente.' },
+              { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + image } }
+            ]
+          }
+        ]
+      })
+    });
+
+    if (!visionRes.ok) {
+      const err = await visionRes.json();
+      throw new Error('Erreur Vision API: ' + (err.error?.message || 'Unknown'));
+    }
+
+    const visionData = await visionRes.json();
+    const imageAnalysis = visionData.choices[0].message.content;
+
+    // Générer une histoire BD basée sur l'analyse de l'image
+    const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + OPENAI_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'Tu es un scénariste de BD professionnel. Basé sur l\'analyse d\'une image, crée une histoire de BD courte (1 couverture + 4 pages) en JSON. Les personnages et le décor doivent correspondre à l\'image analysée. Réponds UNIQUEMENT avec du JSON valide, sans texte supplémentaire.'
+          },
+          {
+            role: 'user',
+            content: `Voici l'analyse détaillée d'une image:\n\n${imageAnalysis}\n\nCrée une histoire BD complète (couverture + 4 pages) basée sur cette image. Chaque page doit avoir 3 panneaux. Utilise les personnages et le décor de l'image. Réponds en JSON avec cette structure:\n{\n  "titre": "Titre de l'histoire",\n  "couverture": {\n    "description_image": "Description détaillée pour générer l'image de couverture",\n    "sous_titre": "Sous-titre"\n  },\n  "pages": [\n    {\n      "numero": 1,\n      "titre_page": "Titre de la page",\n      "narration": "Narration courte",\n      "description_image": "Description pour générer l'image",\n      "panneaux": [\n        { "texte": "Dialogue 1" },\n        { "texte": "Dialogue 2" },\n        { "texte": "Dialogue 3" }\n      ]\n    }\n  ]\n}`
+          }
+        ],
+        response_format: { type: 'json_object' }
+      })
+    });
+
+    if (!gptRes.ok) {
+      const err = await gptRes.json();
+      throw new Error('Erreur GPT: ' + (err.error?.message || 'Unknown'));
+    }
+
+    const gptData = await gptRes.json();
+    const histoire = JSON.parse(gptData.choices[0].message.content);
+
+    return res.json({ histoire });
+  } catch (err) {
+    console.error('Erreur /api/generer-bd-image:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/generate/standard', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
