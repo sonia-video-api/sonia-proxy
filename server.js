@@ -121,7 +121,7 @@ async function genererImageDalle(prompt, quality = 'standard') {
 // === HELPER: Générer image avec style TikTok Anime (Pollinations par défaut) ===
 async function genererImageAvecFallback(prompt, style = 'standard') {
   try {
-    const animePrompt = `Modern TikTok Anime style, high quality digital art, vibrant colors, clean lines, expressive characters, cinematic lighting, 9:16 vertical format: ${prompt}`;
+    const animePrompt = `Masterpiece, high-end digital illustration, Modern TikTok Anime style, vibrant colors, clean lines, expressive characters, cinematic lighting, 9:16 vertical format, consistent character design, detailed background: ${prompt}`;
     return await genererImagePollinations(animePrompt);
   } catch (err) {
     console.warn('Pollinations échoué, fallback DALL-E 3:', err.message);
@@ -215,7 +215,7 @@ app.post('/api/generer-bd-image', async (req, res) => {
         messages: [
           {
             role: 'system',
-            content: 'Tu es un scénariste de BD professionnel. Basé sur l\'analyse d\'une image, crée une histoire de BD courte (1 couverture + 4 pages) en JSON. Les personnages et le décor doivent correspondre à l\'image analysée. Réponds UNIQUEMENT avec du JSON valide, sans texte supplémentaire.'
+            content: 'Tu es un scénariste de BD professionnel et un expert en conception visuelle. Basé sur l\'analyse d\'une image, crée une histoire de BD courte (1 couverture + 4 pages) en JSON. IMPORTANT : Les descriptions d\'images doivent être extrêmement détaillées, décrivant précisément les traits physiques des personnages, leurs vêtements et le décor pour assurer une cohérence visuelle parfaite entre les pages. Réponds UNIQUEMENT avec du JSON valide, sans texte supplémentaire.'
           },
           {
             role: 'user',
