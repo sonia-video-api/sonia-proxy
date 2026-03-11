@@ -307,10 +307,35 @@ app.post('/api/generer-video', async (req, res) => {
         }
       } catch (e) { console.warn('Erreur TTS:', e.message); }
 
+      let mixedAudioBase64 = audioBase64;
+      if (musique !== 'none' && audioBase64) {
+        try {
+          const mixInput = JSON.stringify({
+            voice: audioBase64,
+            music: musique
+          });
+          
+          const mixResult = await new Promise((resolve, reject) => {
+            const scriptPath = path.join(__dirname, 'mix_audio.py');
+            const proc = spawn('python3', [scriptPath]);
+            let stdout = '', stderr = '';
+            proc.stdout.on('data', (d) => stdout += d);
+            proc.stderr.on('data', (d) => stderr += d);
+            proc.on('close', (c) => c !== 0 ? reject(new Error(stderr)) : resolve(stdout));
+            const t = setTimeout(() => { proc.kill(); reject(new Error('Timeout')); }, 30000);
+            proc.stdin.on('error', (e) => { clearTimeout(t); reject(e); });
+            proc.stdin.write(mixInput);
+            proc.stdin.end();
+          });
+          
+          mixedAudioBase64 = JSON.parse(mixResult).audio;
+        } catch (e) { console.warn('Erreur Python mixage:', e.message); }
+      }
+
       segments.push({
         index: page.numero,
         image: 'data:image/jpeg;base64,' + imageBase64Raw,
-        audio: audioBase64,
+        audio: mixedAudioBase64,
         duree: page.numero === 0 ? 10 : 15
       });
     }
